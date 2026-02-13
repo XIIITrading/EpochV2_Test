@@ -1,6 +1,6 @@
 """
 Epoch Trading System - Highlight Trade Data Model
-Maps to trades_m5_r_win table for highlight trade detection.
+Maps to trades_m5_r_win_2 table for highlight trade detection.
 """
 
 from dataclasses import dataclass
@@ -12,7 +12,7 @@ from decimal import Decimal
 @dataclass
 class HighlightTrade:
     """
-    Trade highlight from trades_m5_r_win table.
+    Trade highlight from trades_m5_r_win_2 table.
     Contains R-level hit data for determining highlight quality.
     """
     trade_id: str

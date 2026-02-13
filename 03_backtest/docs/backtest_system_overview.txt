@@ -1,0 +1,685 @@
+================================================================================
+  EPOCH TRADING SYSTEM - 03_BACKTEST MODULE
+  Technical System Overview v4.1
+  XIII Trading LLC
+  Generated: 2026-02-13
+================================================================================
+
+
+TABLE OF CONTENTS
+-----------------
+  1. Executive Summary
+  2. Directory Structure
+  3. Core Pipeline - Data Flow
+  4. Entry Detection Models (EPCH1-4)
+  5. Database Schema
+  6. GUI Interface (PyQt6)
+  7. CLI Interface
+  8. Secondary Processor Pipeline
+  9. Configuration
+  10. Dependencies
+  11. Performance Characteristics
+  12. Troubleshooting
+
+
+================================================================================
+1. EXECUTIVE SUMMARY
+================================================================================
+
+The 03_backtest module is a PyQt6-based entry detection engine that identifies
+high-probability trade entries using 15-second (S15) bars against pre-defined
+price zones. It produces entry records via four detection models (EPCH1-4) and
+exports them to the trades_2 database table.
+
+Key Design Principles:
+
+  - ENTRY-ONLY DETECTION: The core pipeline detects entries but does NOT handle
+    exits, stops, targets, or P&L. That work is delegated to secondary
+    processors.
+
+  - SECONDARY PROCESSOR ARCHITECTURE: 13 self-contained processors handle all
+    downstream analysis (M1 bars, indicators, MFE/MAE, R-levels, etc.).
+
+  - SELF-CONTAINED CONFIGS: Each secondary processor carries its own database
+    credentials and settings -- they do not depend on a shared config.
+
+  - DATA PIPELINE FLOW:
+    zones -> S15 bars -> EPCH1-4 detection -> trades_2
+    trades_2 -> m1_bars_2 -> m1_indicator_bars_2 -> (13 additional processors)
+
+
+================================================================================
+2. DIRECTORY STRUCTURE
+================================================================================
+
+03_backtest/
+|-- app.py                              Module launcher (PyQt6 GUI entry point)
+|-- config.py                           Core config (DB creds, API keys, models)
+|-- CLAUDE.md                           AI context documentation
+|-- README.md                           Human documentation
+|
+|-- backtest_gui/
+|   |-- __init__.py
+|   |-- main.py                         GUI entry point wrapper
+|   |-- main_window.py                  Main QMainWindow (terminal, controls)
+|   +-- styles.py                       Dark theme stylesheet
+|
+|-- scripts/
+|   |-- __init__.py
+|   +-- run_backtest.py                 CLI entry detection runner (via QProcess)
+|
+|-- engine/
+|   |-- __init__.py
+|   |-- entry_models.py                 EPCH1-4 detection logic (EntryDetector)
+|   +-- trade_simulator.py              Entry collection (TradeSimulator)
+|
+|-- models/
+|   |-- __init__.py
+|   +-- exit_models.py                  LEGACY - not used in core pipeline
+|
+|-- data/
+|   |-- __init__.py
+|   |-- zone_loader.py                  ZoneData dataclass definition
+|   |-- supabase_zone_loader.py         Load zones from Supabase setups table
+|   |-- s15_fetcher.py                  Fetch S15 bars from Polygon API
+|   |-- m5_fetcher.py                   M5 bar fetcher (secondary processors)
+|   +-- trades_exporter.py              Export entries to trades_2 table
+|
+|-- processor/
+|   |-- __init__.py
+|   |-- indicators/
+|   |   |-- core/                       Centralized indicator calculations
+|   |   |-- config.py                   Shared indicator configurations
+|   |   +-- utils.py                    Calculation utilities
+|   |
+|   +-- secondary_analysis/             13 secondary processors
+|       |-- run_all.py                  Master runner for all processors
+|       |-- m1_bars/                    Raw M1 OHLCV storage
+|       |-- m1_indicator_bars_2/        M1 indicators (v2, current)
+|       |-- m1_indicator_bars/          M1 indicators v1 (legacy)
+|       |-- m5_indicator_bars/          5-minute indicator bars
+|       |-- m5_trade_bars/              M5 bars for trade periods
+|       |-- h1_bars/                    1-hour bar storage
+|       |-- entry_indicators/           Entry-time indicator snapshots
+|       |-- indicator_refinement/       Secondary signal validation
+|       |-- lifecycle_analysis/         Trade lifecycle signals
+|       |-- optimal_trade/              Optimal exit calculations
+|       |-- mfe_mae/                    Most Favorable Exit / Most Adverse Excursion
+|       |-- op_mfe_mae/                 Options MFE/MAE analysis
+|       |-- r_level_events/             R-level event detection
+|       |-- r_win_loss/                 R-based win/loss classification
+|       |-- stop_analysis/              Stop placement analysis
+|       |-- options_analysis/           Options strategy analysis
+|       +-- trades_unified/             Unified trade database view
+|
+|-- sql/
+|   |-- create_trades_2.sql             Schema for trades_2 table
+|   +-- schema.sql                      Additional schema definitions
+|
++-- docs/
+    +-- backtest_system_overview.txt    This document
+
+
+================================================================================
+3. CORE PIPELINE - DATA FLOW
+================================================================================
+
+The core pipeline runs in five stages:
+
+
+STAGE 1: Zone Loading
+---------------------
+File:  data/supabase_zone_loader.py
+Class: SupabaseZoneLoader
+
+  Supabase "setups" table
+      |
+      v
+  Query by date and setup_type (PRIMARY / SECONDARY)
+      |
+      v
+  Load zones for unique tickers:
+    - zone_id, ticker, direction, hvn_poc
+    - zone_high, zone_low
+    - target_price, risk_reward
+      |
+      v
+  Output: List of ZoneData objects with PRIMARY and SECONDARY zones
+
+
+STAGE 2: S15 Bar Fetching
+--------------------------
+File:  data/s15_fetcher.py
+Class: S15Fetcher
+
+  Polygon API  /v2/aggs/ticker/{ticker}/range/15/second/
+      |
+      v
+  Fetch from [Prior Day 16:00 ET] to [Trade Day 16:00 ET]
+      |
+      v
+  Filter to:
+    Prior Day:  16:00 - 20:00  (after-hours)
+    Trade Day:  04:00 - 16:00  (pre-market + RTH)
+      |
+      v
+  Output: List of S15Bar objects sorted chronologically
+    Each bar: timestamp, open, high, low, close, volume, vwap, transactions
+
+
+STAGE 3: Entry Detection (EPCH1-4)
+-----------------------------------
+File:  engine/entry_models.py
+Class: EntryDetector
+
+  For each S15 bar, run 4 models against both zone types:
+    - EPCH1: Primary Continuation   (price traverses through zone)
+    - EPCH2: Primary Rejection      (price rejects from zone boundary)
+    - EPCH3: Secondary Continuation (same logic as EPCH1, secondary zone)
+    - EPCH4: Secondary Rejection    (same logic as EPCH2, secondary zone)
+
+  Entry window: 09:30 ET to 15:30 ET only
+  Entry price:  Bar close price
+
+  See Section 4 for detailed model logic.
+
+
+STAGE 4: Entry Collection
+--------------------------
+File:  engine/trade_simulator.py
+Class: TradeSimulator
+
+  Collects all detected entries into EntryRecord objects.
+
+  Trade ID format: {TICKER}_{MMDDYY}_{MODEL}_{HHMM}
+  Example:         AAPL_021326_EPCH1_0945
+
+  Each EntryRecord contains:
+    trade_id, date, ticker, model, zone_type, direction,
+    zone_high, zone_low, entry_price, entry_time
+
+
+STAGE 5: Export to Supabase
+----------------------------
+File:  data/trades_exporter.py
+Class: TradesExporter
+
+  1. Delete existing entries for the trade date
+  2. Upsert new entries (ON CONFLICT DO UPDATE)
+  3. Handle duplicate trade_ids by appending counter (_1, _2, etc.)
+  4. Record daily_sessions entry for tracking
+
+
+================================================================================
+4. ENTRY DETECTION MODELS (EPCH1-4)
+================================================================================
+
+All four models share the same underlying detection logic, applied to different
+zone types. EPCH1/EPCH2 operate on PRIMARY zones; EPCH3/EPCH4 operate on
+SECONDARY zones.
+
+
+EPCH1 / EPCH3 - Continuation (Traversing)
+------------------------------------------
+Pattern: Price traverses THROUGH the zone in the direction of origin.
+
+  LONG (Upward Traversal):
+    - Bar opens BELOW zone, closes ABOVE zone_high
+    OR
+    - Bar opens INSIDE zone, closes ABOVE zone_high,
+      AND price origin (most recent close outside zone) was BELOW
+
+  SHORT (Downward Traversal):
+    - Bar opens ABOVE zone, closes BELOW zone_low
+    OR
+    - Bar opens INSIDE zone, closes BELOW zone_low,
+      AND price origin was ABOVE
+
+
+EPCH2 / EPCH4 - Rejection (Wick Entry)
+---------------------------------------
+Pattern: Price rejects from zone boundary via wick penetration.
+
+  LONG (Upward Rejection):
+    - Bar opens ABOVE zone, wick enters zone (low <= zone_high),
+      closes ABOVE zone_high
+    OR
+    - Bar opens INSIDE zone, closes ABOVE zone_high,
+      AND price origin was ABOVE
+
+  SHORT (Downward Rejection):
+    - Bar opens BELOW zone, wick enters zone (high >= zone_low),
+      closes BELOW zone_low
+    OR
+    - Bar opens INSIDE zone, closes BELOW zone_low,
+      AND price origin was BELOW
+
+
+Price Origin Detection:
+  The detector looks backward through bar history to find the most recent
+  bar that closed OUTSIDE the zone:
+    - Last external close BELOW zone_low  ->  origin = "BELOW"
+    - Last external close ABOVE zone_high ->  origin = "ABOVE"
+    - No external close found             ->  origin = None (entry skipped)
+
+
+Model Mapping:
+  EPCH1 = Continuation on PRIMARY zone
+  EPCH2 = Rejection on PRIMARY zone
+  EPCH3 = Continuation on SECONDARY zone
+  EPCH4 = Rejection on SECONDARY zone
+
+
+================================================================================
+5. DATABASE SCHEMA
+================================================================================
+
+
+trades_2 (Entry Detection Output)
+----------------------------------
+This is the primary output table of the core pipeline.
+
+  Column        Type            Purpose
+  ------------- --------------- ------------------------------------------
+  trade_id      VARCHAR PK      {TICKER}_{MMDDYY}_{MODEL}_{HHMM}
+  date          DATE            Trading date
+  ticker        VARCHAR         Stock symbol
+  model         VARCHAR         EPCH1, EPCH2, EPCH3, or EPCH4
+  zone_type     VARCHAR         PRIMARY or SECONDARY
+  direction     VARCHAR         LONG or SHORT
+  zone_high     NUMERIC         Zone upper boundary price
+  zone_low      NUMERIC         Zone lower boundary price
+  entry_price   NUMERIC         Close price of the triggering S15 bar
+  entry_time    TIME            Time of the triggering S15 bar
+  created_at    TIMESTAMPTZ     When entry was first detected
+  updated_at    TIMESTAMPTZ     Last update timestamp
+
+  Indexes: date, ticker, model
+
+
+m1_bars_2 (Raw M1 Bar Data)
+-----------------------------
+Stores 1-minute OHLCV data for the extended trading session.
+Time window: Prior day 16:00 ET through trade day 16:00 ET.
+Data source: Polygon API.
+
+  Column         Type            Purpose
+  -------------- --------------- ------------------------------------------
+  id             BIGSERIAL PK    Auto-increment
+  ticker         VARCHAR         Stock symbol
+  bar_date       DATE            Trading date
+  bar_time       TIME            Bar start time (ET)
+  bar_timestamp  TIMESTAMPTZ     Full timestamp (UNIQUE with ticker)
+  open           DECIMAL         Open price
+  high           DECIMAL         High price
+  low            DECIMAL         Low price
+  close          DECIMAL         Close price
+  volume         BIGINT          Shares traded
+  vwap           DECIMAL         Volume-weighted average price
+  transactions   INTEGER         Number of transactions
+  fetched_at     TIMESTAMPTZ     When bar was fetched
+
+
+m1_indicator_bars_2 (M1 Indicators v2)
+---------------------------------------
+Pre-calculated indicators on M1 bars using Entry Qualifier standard plus
+extended analysis. Reads from m1_bars_2 table (not Polygon API directly).
+
+  Column              Type         Source / Description
+  ------------------- ------------ ------------------------------------------
+  ticker              VARCHAR      } Composite
+  bar_date            DATE         } Primary
+  bar_time            TIME         } Key
+  open/high/low/      DECIMAL      OHLCV from m1_bars_2
+    close/volume
+
+  -- Entry Qualifier Standard Indicators --
+  candle_range_pct    NUMERIC      (high - low) / close * 100
+  vol_delta_raw       NUMERIC      ((2*(C-L)/(H-L))-1) * volume
+  vol_delta_roll      NUMERIC      5-bar rolling sum of vol_delta_raw
+  vol_roc             NUMERIC      ((vol - avg20) / avg20) * 100
+  sma9                NUMERIC      9-period SMA of close
+  sma21               NUMERIC      21-period SMA of close
+  sma_config          VARCHAR(10)  BULL / BEAR / FLAT
+  sma_spread_pct      NUMERIC      abs(sma9 - sma21) / close * 100
+  price_position      VARCHAR(10)  ABOVE / BTWN / BELOW (vs SMA bands)
+
+  -- Extended Indicators --
+  vwap                NUMERIC      Cumulative session VWAP
+  sma_spread          NUMERIC      sma9 - sma21 (signed)
+  sma_momentum_ratio  NUMERIC      Current spread / spread 10 bars ago
+  sma_momentum_label  VARCHAR(15)  WIDENING / NARROWING / STABLE
+  cvd_slope           NUMERIC      Normalized CVD slope (15-bar window)
+
+  -- Market Structure (Multi-Timeframe) --
+  m1_structure        VARCHAR(10)  M1 fractal BOS/ChoCH
+  m5_structure        VARCHAR(10)  M5 native bars (Polygon API)
+  m15_structure       VARCHAR(10)  M15 native bars (Polygon API)
+  h1_structure        VARCHAR(10)  H1 bars (from h1_bars DB table)
+  h4_structure        VARCHAR(10)  H4 native bars (Polygon API)
+
+  -- Composite Scores --
+  health_score        INTEGER      0-10 direction-agnostic quality
+  long_score          INTEGER      0-7 long setup composite
+  short_score         INTEGER      0-7 short setup composite
+
+  -- Metadata --
+  bars_in_calculation INTEGER      Bars used to compute indicators
+  calculated_at       TIMESTAMPTZ  When indicators were calculated
+
+
+================================================================================
+6. GUI INTERFACE (PyQt6)
+================================================================================
+
+File:  backtest_gui/main_window.py
+Class: BacktestRunnerWindow
+
+The GUI provides a dark-themed PyQt6 window with terminal output, date
+selection, and processor controls.
+
+  +-----------------------------------------------------------+
+  | EPOCH BACKTEST RUNNER v4.0 - Entry Detection              |
+  +-----------------------------------------------------------+
+  | DATE: [2026-02-13]                                        |
+  |                                                           |
+  | PROCESSORS:              PROGRESS:                        |
+  | [ ] Fetch M1 Bars        [=================>    ] 75%     |
+  | [ ] Calculate M1 Ind.                                     |
+  |                                                           |
+  |              [CLEAR ENTRIES]  [RUN BACKTEST]  [STOP]      |
+  +-----------------------------------------------------------+
+  | TERMINAL OUTPUT                                    [Clear] |
+  | ========================================================= |
+  | [1/5] Loading zones for 2026-02-13...                     |
+  |   Found 4 primary zones, 2 secondary zones               |
+  |   Tickers: AAPL, QQQ, SPY                                |
+  | [2/8] Processing AAPL (1/3)...                            |
+  |   Primary Zone: $185.50 - $187.00                         |
+  |   Fetched 4532 S15 bars                                   |
+  |   Detected 3 entries                                      |
+  |     EPCH1 LONG: $186.85 @ 10:30:15                       |
+  +-----------------------------------------------------------+
+  | Status: Processing 1/3 | Running...            10:45:23   |
+  +-----------------------------------------------------------+
+
+Controls:
+  - Date Selector:          Pick any trading date
+  - Fetch M1 Bars:          Checkbox to run M1 bar fetcher after detection
+  - Calculate M1 Indicators: Checkbox to run M1 indicator calculator
+  - RUN BACKTEST:           Launches scripts/run_backtest.py via QProcess
+  - STOP:                   Terminates the running subprocess
+  - CLEAR ENTRIES:          Deletes entries for selected date from trades_2
+
+Terminal Features:
+  - Real-time streaming from subprocess stdout/stderr
+  - Color coding: green (complete), red (error), yellow (processors)
+  - Progress bar parses [X/N] pattern from output
+
+Architecture Notes:
+  - QProcess launches run_backtest.py as a child process
+  - PYTHONUNBUFFERED=1 ensures real-time output streaming
+  - stdout and stderr are merged into a single output channel
+
+
+================================================================================
+7. CLI INTERFACE
+================================================================================
+
+File: scripts/run_backtest.py
+
+Usage:
+
+  # Basic entry detection for a date
+  python run_backtest.py 2026-02-13
+
+  # Preview without writing to database
+  python run_backtest.py 2026-02-13 --dry-run
+
+  # Skip Supabase export
+  python run_backtest.py 2026-02-13 --no-export
+
+  # Also fetch M1 bars after entry detection
+  python run_backtest.py 2026-02-13 --m1-bars
+
+  # Also calculate M1 indicators (requires M1 bars)
+  python run_backtest.py 2026-02-13 --m1-indicators
+
+  # Full pipeline
+  python run_backtest.py 2026-02-13 --m1-bars --m1-indicators
+
+Execution Flow:
+  1. Parse arguments (date, flags)
+  2. Load zones from Supabase setups table
+  3. For each unique ticker:
+     a. Fetch S15 bars from Polygon
+     b. Run EPCH1-4 entry detection on each bar
+     c. Collect EntryRecord objects
+  4. Print summary (entries by model, direction, zone type)
+  5. Export to trades_2 table in Supabase
+  6. Run optional processors (M1 bars, M1 indicators)
+  7. Print statistics (success/failure, execution time)
+
+
+================================================================================
+8. SECONDARY PROCESSOR PIPELINE
+================================================================================
+
+After entry detection, 13 self-contained processors handle downstream analysis.
+Each processor has its own config.py, runner, and SQL schema.
+
+
+Level 1 - Raw Data Storage
+---------------------------
+
+  m1_bars           Fetches M1 OHLCV from Polygon API.
+                    Window: Prior day 16:00 -> Trade day 16:00.
+                    Output: m1_bars_2 table.
+
+  h1_bars           Fetches H1 bars for structure detection.
+                    Used by m1_indicator_bars_2 for H1 structure.
+                    Output: h1_bars table.
+
+
+Level 2 - Indicator Calculation
+--------------------------------
+
+  m1_indicator_     Reads from m1_bars_2 (NOT Polygon API).
+  bars_2            Calculates 22 indicators + 3 composite scores.
+                    Includes multi-timeframe structure (M1/M5/M15/H1/H4).
+                    Output: m1_indicator_bars_2 table.
+
+  m5_indicator_     Same concept on 5-minute timeframe.
+  bars              Output: m5_indicator_bars table.
+
+  entry_            Indicator snapshot at exact entry time.
+  indicators        Output: entry_indicators table.
+
+
+Level 3 - Trade Simulation Data
+---------------------------------
+
+  m5_trade_bars     M5 bars filtered to post-entry trade windows.
+                    Output: m5_trade_bars table.
+
+
+Level 4 - Advanced Analysis
+-----------------------------
+
+  mfe_mae           Most Favorable Exit / Most Adverse Excursion.
+                    Uses M1 bars to find exact peak/trough post-entry.
+                    Output: mfe_mae_potential table.
+
+  op_mfe_mae        Options-specific MFE/MAE analysis.
+                    Output: op_mfe_mae_potential table.
+
+  optimal_trade     Best possible exit with perfect foresight.
+                    Output: optimal_trade table.
+
+  r_level_events    Price events at R-multiples (1R, 2R, 3R, etc.).
+                    Output: r_level_events table.
+
+  r_win_loss        Win/loss classification by R-multiple.
+                    Output: r_win_loss table.
+
+  indicator_        Secondary signal validation and filtering.
+  refinement        Output: indicator_refinement table.
+
+  trades_unified    Unified view combining all processor outputs.
+                    Output: trades_unified table.
+
+
+Processor Pipeline Diagram:
+
+  trades_2 (entries)
+      |
+      +---> m1_bars_2 (raw M1 OHLCV, 16:00 -> 16:00)
+      |         |
+      |         +---> m1_indicator_bars_2 (22 indicators + 3 scores)
+      |         |
+      |         +---> mfe_mae
+      |         |
+      |         +---> optimal_trade
+      |
+      +---> m5_trade_bars
+      |         |
+      |         +---> m5_indicator_bars
+      |
+      +---> entry_indicators
+      |
+      +---> r_level_events ---> r_win_loss
+      |
+      +---> indicator_refinement
+      |
+      +---> trades_unified (aggregates all above)
+
+
+================================================================================
+9. CONFIGURATION
+================================================================================
+
+
+Module-Level Config (03_backtest/config.py)
+--------------------------------------------
+  SUPABASE_HOST       Database connection endpoint
+  POLYGON_API_KEY     Polygon.io API key (unlimited tier)
+  ENTRY_START_TIME    09:30 ET (regular trading hours start)
+  ENTRY_END_TIME      15:30 ET (last entry allowed)
+  ENTRY_MODELS        EPCH1=1, EPCH2=2, EPCH3=3, EPCH4=4
+
+
+Secondary Processor Configs
+-----------------------------
+Each processor in processor/secondary_analysis/ has its own config.py:
+
+  m1_bars/config.py               Polygon API key, DB creds, time window
+  m1_indicator_bars_2/config.py   SMA periods (9,21), CVD window (15), batch 500
+  h1_bars/config.py               H1-specific Polygon + DB settings
+
+These are intentionally self-contained and do NOT import from the module-level
+config.py or from 00_shared.
+
+
+Indicator Library Config (processor/indicators/config.py)
+----------------------------------------------------------
+  SMA fast period:      9
+  SMA slow period:      21
+  SMA momentum lookback: 10
+  Volume delta rolling:  5
+  CVD slope window:      15
+  Score thresholds:      Defined per indicator
+
+
+================================================================================
+10. DEPENDENCIES
+================================================================================
+
+External Libraries:
+  PyQt6               GUI framework
+  psycopg2-binary     PostgreSQL client for Supabase
+  requests            HTTP library for Polygon API
+  pandas              DataFrame operations (indicator calculations)
+  numpy               Numerical calculations
+  pytz                Timezone handling (Eastern Time)
+  polygon-api-client  Polygon.io REST client (some secondary processors)
+
+Internal Module Imports:
+  config              -> DB credentials, API keys, entry model definitions
+  data/*              -> Zone loading, S15 fetching, trade exporting
+  engine/*            -> Entry detection, trade simulation
+  processor/*         -> Indicators, secondary analysis
+
+
+================================================================================
+11. PERFORMANCE CHARACTERISTICS
+================================================================================
+
+S15 Bar Fetching (per ticker):
+  Bars returned:      ~4,000-5,000 per ticker-date
+  API call time:      ~0.5-1 second
+  For 5 tickers:      ~3-5 seconds total
+
+Entry Detection (per ticker):
+  Bars processed:     ~4,000-5,000
+  Time per bar:       < 1ms (simple boolean checks)
+  For 5 tickers:      ~5-10 seconds total
+
+M1 Bar Storage (per ticker):
+  Bars per ticker:    ~360-390 (one per minute, extended session)
+  API calls:          1 per ticker-date
+  Batch insert size:  500 bars
+  For 5 tickers:      ~10-30 seconds total
+
+M1 Indicator Calculation (per ticker):
+  Bars per ticker:    ~360-390
+  Indicators per bar: 27 (22 indicators + 5 structure fields)
+  Structure API calls: ~4 per ticker (M5, M15, H4 from Polygon; H1 from DB)
+  For 5 tickers:      ~15-40 seconds total
+
+Full Pipeline (5 tickers):
+  Entry detection:    ~10-15 seconds
+  M1 bars (optional): ~15-30 seconds
+  M1 indicators:      ~20-50 seconds
+  TOTAL:              ~45-95 seconds
+
+
+================================================================================
+12. TROUBLESHOOTING
+================================================================================
+
+No Entries Detected:
+  1. Verify zone data exists in Supabase setups table for the target date
+  2. Check that date format matches (YYYY-MM-DD)
+  3. Confirm S15 bars are being fetched (should see 4000+ bars per ticker)
+  4. Ensure entry window covers 09:30-15:30 ET
+  5. Enable VERBOSE=True in config.py for bar-by-bar logging
+
+Export Fails:
+  1. Verify Supabase credentials in config.py
+  2. Confirm trades_2 table exists (run sql/create_trades_2.sql)
+  3. Check for network connectivity to Supabase
+  4. Look for duplicate trade_id errors in output
+
+M1 Bars Not Populating:
+  1. Confirm m1_bars_2 table exists (runner.py --schema)
+  2. Check that --m1-bars flag was passed to the CLI runner
+  3. Verify Polygon API key is valid and has sufficient quota
+  4. Confirm prior trading day is a weekday (no weekend data)
+
+GUI Progress Bar Not Updating:
+  1. Verify PYTHONUNBUFFERED=1 is set (main_window.py sets this)
+  2. Confirm CLI runner outputs [X/N] pattern in stdout
+  3. Check subprocess error messages in terminal output
+  4. Try running the CLI script directly to isolate GUI issues
+
+M1 Indicators Missing or Incomplete:
+  1. Confirm m1_bars_2 has data for the target date first
+  2. Check m1_indicator_bars_2 table exists (runner.py --schema)
+  3. Look for API rate limit errors on HTF structure bar fetches
+  4. Verify h1_bars table is populated (needed for H1 structure)
+
+
+================================================================================
+  END OF DOCUMENT
+  Epoch Trading System v2.0 - XIII Trading LLC
+================================================================================

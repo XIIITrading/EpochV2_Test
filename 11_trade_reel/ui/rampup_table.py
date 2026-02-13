@@ -1,7 +1,7 @@
 """
 Epoch Trading System - M1 Ramp-Up Indicator Table (Trade Reel)
 QTableWidget showing 7 indicator rows x N bar columns, up to entry.
-Data sourced from m1_indicator_bars table.
+Data sourced from m1_indicator_bars_2 table.
 
 Reuses formatter/color logic from 06_training/components/rampup_chart.py.
 """
@@ -195,10 +195,10 @@ def fetch_rampup_data(
             ticker, bar_date, bar_time,
             open, high, low, close, volume,
             vwap, sma9, sma21, sma_spread,
-            vol_roc, vol_delta,
+            vol_roc, vol_delta_roll,
             m5_structure, m15_structure, h1_structure,
             candle_range_pct
-        FROM m1_indicator_bars
+        FROM m1_indicator_bars_2
         WHERE ticker = %s
           AND bar_date = %s
           AND bar_time < %s
@@ -347,7 +347,7 @@ class RampUpTable(QFrame):
         if ind_name == 'Candle %':
             return _fmt_candle_range(row.get('candle_range_pct')), _color_candle_range(row.get('candle_range_pct'))
         elif ind_name == 'Vol Delta':
-            return _fmt_vol_delta(row.get('vol_delta')), _color_vol_delta(row.get('vol_delta'))
+            return _fmt_vol_delta(row.get('vol_delta_roll')), _color_vol_delta(row.get('vol_delta_roll'))
         elif ind_name == 'Vol ROC':
             return _fmt_vol_roc(row.get('vol_roc')), _color_vol_roc(row.get('vol_roc'))
         elif ind_name == 'SMA':

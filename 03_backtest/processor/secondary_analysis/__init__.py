@@ -1,22 +1,22 @@
 """
 ================================================================================
-EPOCH TRADING SYSTEM - MODULE 09: SECONDARY ANALYSIS
+EPOCH TRADING SYSTEM - SECONDARY ANALYSIS
 Secondary Analysis Package
 XIII Trading LLC
 ================================================================================
 
-This package contains secondary analysis modules that operate on data
-stored in Supabase, independent of the Epoch Excel worksheet workflow.
+Secondary analysis modules that operate on trades_2 data stored in Supabase.
+Each processor is self-contained with its own config, calculator, runner, and schema.
 
-Modules:
-    mfe_mae/            - MFE/MAE Potential Calculator (entry to EOD analysis)
-    m1_bars/            - M1 Bar Storage (Polygon to Supabase)
-    entry_indicators/   - Entry Indicator Snapshots (for CALC-005 through CALC-008)
-    m5_indicator_bars/  - Direction-agnostic M5 bars with indicators (CALC-007)
-    m5_trade_bars/      - Trade-specific M5 bars with health scoring (CALC-007)
+Pipeline Order:
+    1. m1_bars/              - M1 Bar Storage (Polygon to Supabase m1_bars_2)
+    2. m1_indicator_bars_2/  - M1 Indicator Bars (22 indicators + 3 scores)
+    3. m1_atr_stop_2/        - M1 ATR Stop Analysis (R-multiple targets 1R-5R)
+    4. m5_atr_stop_2/        - M5 ATR Stop Analysis (R-multiple targets 1R-5R)
+    5. trades_m5_r_win_2/    - Trades Consolidated (denormalized for trade_reel)
 
-Version: 1.1.0
+Version: 2.1.0
 ================================================================================
 """
 
-__version__ = "1.1.0"
+__version__ = "2.1.0"

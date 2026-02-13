@@ -27,6 +27,7 @@ CVD_CONFIG = _config.CVD_CONFIG
 STRUCTURE_CONFIG = _config.STRUCTURE_CONFIG
 HEALTH_CONFIG = _config.HEALTH_CONFIG
 SCORE_CONFIG = _config.SCORE_CONFIG
+ATR_CONFIG = _config.ATR_CONFIG
 
 # Load utils module
 _utils = _load_module("_shared_utils", _LIB_DIR / "utils.py")
@@ -49,3 +50,4 @@ CVDResult = _types.CVDResult
 StructureResult = _types.StructureResult
 HealthResult = _types.HealthScoreResult
 ScoreResult = _types.ScoreResult
+ATRResult = _types.ATRResult

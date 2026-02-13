@@ -83,6 +83,9 @@ VOLUME_DELTA_ROLLING_PERIOD = 5
 # CVD Configuration
 CVD_WINDOW = 15
 
+# ATR Configuration
+ATR_PERIOD = 14
+
 # Structure Configuration
 FRACTAL_LENGTH = 5  # Bars on each side for fractal detection
 

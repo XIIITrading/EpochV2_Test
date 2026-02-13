@@ -183,6 +183,7 @@ class M1IndicatorBarsPopulator:
                 vwap, sma_spread, sma_momentum_ratio, sma_momentum_label, cvd_slope,
                 h4_structure, h1_structure, m15_structure, m5_structure, m1_structure,
                 health_score, long_score, short_score,
+                atr_m1, atr_m5, atr_m15,
                 bars_in_calculation
             ) VALUES %s
             ON CONFLICT (ticker, bar_date, bar_time) DO NOTHING
@@ -221,6 +222,9 @@ class M1IndicatorBarsPopulator:
                 self._convert_numpy(r.health_score),
                 self._convert_numpy(r.long_score),
                 self._convert_numpy(r.short_score),
+                self._convert_numpy(r.atr_m1),
+                self._convert_numpy(r.atr_m5),
+                self._convert_numpy(r.atr_m15),
                 self._convert_numpy(r.bars_in_calculation)
             )
             values.append(row)

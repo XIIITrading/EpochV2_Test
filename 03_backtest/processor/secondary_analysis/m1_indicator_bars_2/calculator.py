@@ -104,8 +104,13 @@ class M1IndicatorBarResult:
     long_score: Optional[int]
     short_score: Optional[int]
 
+    # ATR (Average True Range, 14-period)
+    atr_m1: Optional[float] = None
+    atr_m5: Optional[float] = None
+    atr_m15: Optional[float] = None
+
     # Metadata
-    bars_in_calculation: int
+    bars_in_calculation: int = 0
 
 
 # =============================================================================
@@ -221,6 +226,10 @@ class M1IndicatorBarsCalculator:
                 bar_time=bar_time
             )
 
+            # Calculate HTF ATR (reuses cached bars from structure detection)
+            atr_m5 = self._calculate_htf_atr(ticker, trade_date, bar_time, 'M5')
+            atr_m15 = self._calculate_htf_atr(ticker, trade_date, bar_time, 'M15')
+
             # Build result
             result = M1IndicatorBarResult(
                 ticker=ticker,
@@ -264,6 +273,11 @@ class M1IndicatorBarsCalculator:
                 long_score=self._safe_int(row.get('long_score')),
                 short_score=self._safe_int(row.get('short_score')),
 
+                # ATR (Average True Range, 14-period)
+                atr_m1=self._safe_float(row.get('atr_m1')),
+                atr_m5=self._safe_float(atr_m5),
+                atr_m15=self._safe_float(atr_m15),
+
                 # Metadata
                 bars_in_calculation=idx + 1
             )
@@ -273,6 +287,56 @@ class M1IndicatorBarsCalculator:
         self._log(f"Calculated {len(results)} M1 indicator bars")
 
         return results
+
+    def _calculate_htf_atr(
+        self,
+        ticker: str,
+        trade_date: date,
+        bar_time: time,
+        timeframe: str,
+        period: int = 14
+    ) -> Optional[float]:
+        """
+        Calculate ATR for a higher timeframe at a specific bar time.
+
+        Reuses bars already cached by HTFBarFetcher (from structure detection),
+        so no additional Polygon API calls are needed.
+
+        Args:
+            ticker: Stock symbol
+            trade_date: Trading date
+            bar_time: Current bar time (filter HTF bars up to this point)
+            timeframe: 'M5' or 'M15'
+            period: ATR period (default 14)
+
+        Returns:
+            ATR value or None if insufficient data
+        """
+        try:
+            bars = self.structure_analyzer.fetcher.fetch_bars(
+                ticker, timeframe, trade_date, bar_time
+            )
+
+            if len(bars) < period + 1:
+                return None
+
+            # Calculate True Range for each bar (need prev close)
+            true_ranges = []
+            for i in range(1, len(bars)):
+                high = float(bars[i]['high'])
+                low = float(bars[i]['low'])
+                prev_close = float(bars[i - 1]['close'])
+                tr = max(high - low, abs(high - prev_close), abs(low - prev_close))
+                true_ranges.append(tr)
+
+            # ATR = SMA of last `period` true ranges
+            if len(true_ranges) < period:
+                return None
+
+            return sum(true_ranges[-period:]) / period
+
+        except Exception:
+            return None
 
     def _safe_float(self, value) -> Optional[float]:
         """Convert value to float, returning None for NaN."""

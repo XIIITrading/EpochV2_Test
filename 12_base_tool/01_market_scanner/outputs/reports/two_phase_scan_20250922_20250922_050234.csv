@@ -1,3 +1,0 @@
-rank,ticker,current_price,gap_percent,current_overnight_volume,prior_overnight_volume,relative_overnight_volume,relative_volume,short_interest,days_to_cover,ranking_score,atr,prior_close
-1,TER,126.2584,5.347017104714227,35956,35817,1.0038808387078761,1.0,0,0,300.0,4.371367589018621,119.85
-2,NEM,83.58,2.2760646108663725,35392,34543,1.0245780621254668,1.0,0,0,200.0,2.1249519010318716,81.72

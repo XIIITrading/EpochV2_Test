@@ -92,6 +92,10 @@ CVD_WINDOW = _local_config.CVD_WINDOW
 HEALTH_VOL_ROC_THRESHOLD = _local_config.HEALTH_VOL_ROC_THRESHOLD
 HEALTH_CVD_SLOPE_THRESHOLD = _local_config.HEALTH_CVD_SLOPE_THRESHOLD
 HEALTH_SMA_SPREAD_THRESHOLD = _local_config.HEALTH_SMA_SPREAD_THRESHOLD
+ATR_PERIOD = _local_config.ATR_PERIOD
+
+# Import ATR calculation from centralized library
+from core.atr import calculate_true_range
 
 
 # =============================================================================
@@ -243,6 +247,9 @@ class M1IndicatorCalculator:
         # Calculate Entry Qualifier Indicators
         df = self._add_candle_range(df)
         df = self._add_composite_scores(df)
+
+        # Calculate ATR (M1 timeframe)
+        df = self._add_atr_m1(df)
 
         return df
 
@@ -595,6 +602,45 @@ class M1IndicatorCalculator:
 
         df['long_score'] = df.apply(calculate_long_score, axis=1)
         df['short_score'] = df.apply(calculate_short_score, axis=1)
+
+        return df
+
+    # =========================================================================
+    # ATR (AVERAGE TRUE RANGE) - M1 TIMEFRAME
+    # =========================================================================
+
+    def _add_atr_m1(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Add M1 ATR column (14-period by default).
+
+        Formula (from centralized 03_indicators library):
+          True Range = max(high - low, |high - prev_close|, |low - prev_close|)
+          ATR = SMA of True Range over ATR_PERIOD bars
+
+        Uses centralized calculate_true_range for the TR calculation,
+        then pandas rolling for the SMA.
+
+        Adds column: atr_m1
+        """
+        # Calculate True Range for each bar
+        prev_close = df['close'].shift(1)
+        df['_tr'] = df.apply(
+            lambda row: calculate_true_range(
+                float(row['high']),
+                float(row['low']),
+                float(prev_close.loc[row.name]) if pd.notna(prev_close.loc[row.name]) else float(row['low'])
+            ),
+            axis=1
+        )
+
+        # ATR = SMA of True Range over period
+        df['atr_m1'] = df['_tr'].rolling(
+            window=ATR_PERIOD,
+            min_periods=ATR_PERIOD
+        ).mean()
+
+        # Clean up temp columns
+        df = df.drop(columns=['_tr'])
 
         return df
 

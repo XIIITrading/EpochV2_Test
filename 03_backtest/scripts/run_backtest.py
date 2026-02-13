@@ -16,6 +16,8 @@ USAGE:
     python run_backtest.py 2026-01-20 --dry-run    # Preview without DB writes
     python run_backtest.py 2026-01-20 --no-export  # Skip Supabase export
     python run_backtest.py 2026-01-20 --m1-bars    # Also fetch/store M1 bars
+    python run_backtest.py 2026-01-20 --m1-atr-stop  # Run M1 ATR stop analysis
+    python run_backtest.py 2026-01-20 --m5-atr-stop  # Run M5 ATR stop analysis
 
 MODEL:
     - S15 (15-second) bar close triggers EPCH1-4 entry detection
@@ -42,6 +44,9 @@ from engine.trade_simulator import TradeSimulator, EntryRecord
 # Secondary processor paths
 M1_BARS_PROCESSOR = Path(__file__).parent.parent / "processor" / "secondary_analysis" / "m1_bars"
 M1_INDICATORS_PROCESSOR = Path(__file__).parent.parent / "processor" / "secondary_analysis" / "m1_indicator_bars_2"
+M1_ATR_STOP_PROCESSOR = Path(__file__).parent.parent / "processor" / "secondary_analysis" / "m1_atr_stop_2"
+M5_ATR_STOP_PROCESSOR = Path(__file__).parent.parent / "processor" / "secondary_analysis" / "m5_atr_stop_2"
+TRADES_M5_R_WIN_2_PROCESSOR = Path(__file__).parent.parent / "processor" / "secondary_analysis" / "trades_m5_r_win_2"
 
 
 def run_backtest_for_date(trade_date: str, dry_run: bool = False) -> List[EntryRecord]:
@@ -233,6 +238,102 @@ def run_m1_indicators_processor():
         return False
 
 
+def run_m1_atr_stop_processor():
+    """Run the M1 ATR Stop secondary processor."""
+    print(f"\n{'='*70}")
+    print("[M1 ATR STOP] Calculating M1 ATR stop outcomes (R-multiple targets)")
+    print(f"{'='*70}")
+
+    runner_script = M1_ATR_STOP_PROCESSOR / "runner.py"
+
+    if not runner_script.exists():
+        print(f"  ERROR: M1 ATR Stop runner not found: {runner_script}")
+        return False
+
+    try:
+        result = subprocess.run(
+            [sys.executable, str(runner_script), "--verbose"],
+            cwd=str(M1_ATR_STOP_PROCESSOR),
+            capture_output=False,
+            text=True
+        )
+
+        if result.returncode == 0:
+            print(f"\n[M1 ATR STOP] Completed successfully")
+            return True
+        else:
+            print(f"\n[M1 ATR STOP] Failed with exit code {result.returncode}")
+            return False
+
+    except Exception as e:
+        print(f"\n[M1 ATR STOP] Error: {e}")
+        return False
+
+
+def run_m5_atr_stop_processor():
+    """Run the M5 ATR Stop secondary processor."""
+    print(f"\n{'='*70}")
+    print("[M5 ATR STOP] Calculating M5 ATR stop outcomes (R-multiple targets)")
+    print(f"{'='*70}")
+
+    runner_script = M5_ATR_STOP_PROCESSOR / "runner.py"
+
+    if not runner_script.exists():
+        print(f"  ERROR: M5 ATR Stop runner not found: {runner_script}")
+        return False
+
+    try:
+        result = subprocess.run(
+            [sys.executable, str(runner_script), "--verbose"],
+            cwd=str(M5_ATR_STOP_PROCESSOR),
+            capture_output=False,
+            text=True
+        )
+
+        if result.returncode == 0:
+            print(f"\n[M5 ATR STOP] Completed successfully")
+            return True
+        else:
+            print(f"\n[M5 ATR STOP] Failed with exit code {result.returncode}")
+            return False
+
+    except Exception as e:
+        print(f"\n[M5 ATR STOP] Error: {e}")
+        return False
+
+
+def run_trades_consolidated_processor():
+    """Run the trades consolidation secondary processor."""
+    print(f"\n{'='*70}")
+    print("[TRADES CONSOLIDATED] Consolidating trades into trades_m5_r_win_2")
+    print(f"{'='*70}")
+
+    runner_script = TRADES_M5_R_WIN_2_PROCESSOR / "runner.py"
+
+    if not runner_script.exists():
+        print(f"  ERROR: Trades consolidated runner not found: {runner_script}")
+        return False
+
+    try:
+        result = subprocess.run(
+            [sys.executable, str(runner_script), "--verbose"],
+            cwd=str(TRADES_M5_R_WIN_2_PROCESSOR),
+            capture_output=False,
+            text=True
+        )
+
+        if result.returncode == 0:
+            print(f"\n[TRADES CONSOLIDATED] Completed successfully")
+            return True
+        else:
+            print(f"\n[TRADES CONSOLIDATED] Failed with exit code {result.returncode}")
+            return False
+
+    except Exception as e:
+        print(f"\n[TRADES CONSOLIDATED] Error: {e}")
+        return False
+
+
 def main():
     """Main entry point"""
     parser = argparse.ArgumentParser(
@@ -256,6 +357,12 @@ Examples:
                         help='Fetch and store M1 bars after entry detection')
     parser.add_argument('--m1-indicators', action='store_true',
                         help='Calculate M1 indicator bars after M1 bars storage')
+    parser.add_argument('--m1-atr-stop', action='store_true',
+                        help='Calculate M1 ATR stop outcomes (R-multiple targets)')
+    parser.add_argument('--m5-atr-stop', action='store_true',
+                        help='Calculate M5 ATR stop outcomes (R-multiple targets)')
+    parser.add_argument('--trades-consolidated', action='store_true',
+                        help='Consolidate trades into trades_m5_r_win_2 for trade_reel')
 
     args = parser.parse_args()
 
@@ -270,6 +377,9 @@ Examples:
     print(f"Export: {'Disabled' if args.no_export else 'Enabled'}")
     print(f"M1 Bars: {'Enabled' if args.m1_bars else 'Disabled'}")
     print(f"M1 Indicators: {'Enabled' if args.m1_indicators else 'Disabled'}")
+    print(f"M1 ATR Stop: {'Enabled' if args.m1_atr_stop else 'Disabled'}")
+    print(f"M5 ATR Stop: {'Enabled' if args.m5_atr_stop else 'Disabled'}")
+    print(f"Consolidate Trades: {'Enabled' if args.trades_consolidated else 'Disabled'}")
 
     # Run entry detection
     entries = run_backtest_for_date(args.date, dry_run=args.dry_run)
@@ -308,6 +418,18 @@ Examples:
         # Run M1 indicators processor if requested
         if args.m1_indicators and not args.dry_run:
             run_m1_indicators_processor()
+
+        # Run M1 ATR Stop processor if requested
+        if args.m1_atr_stop and not args.dry_run:
+            run_m1_atr_stop_processor()
+
+        # Run M5 ATR Stop processor if requested
+        if args.m5_atr_stop and not args.dry_run:
+            run_m5_atr_stop_processor()
+
+        # Run trades consolidation processor if requested
+        if args.trades_consolidated and not args.dry_run:
+            run_trades_consolidated_processor()
 
     else:
         print("\nNo entries detected.")

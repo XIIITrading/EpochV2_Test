@@ -1,3 +1,0 @@
-rank,ticker,current_price,gap_percent,current_overnight_volume,prior_overnight_volume,relative_overnight_volume,relative_volume,short_interest,days_to_cover,ranking_score,atr,prior_close
-1,ORCL,315.88,4.5475607334348345,1960237.0,4024043.0,0.4871312259834202,1.0,0,0,300.0,19.30252425354738,302.14
-2,HSY,190.98,2.920888122440174,554.0,871.0,0.6360505166475315,1.0,0,0,200.0,3.016048989870354,185.56

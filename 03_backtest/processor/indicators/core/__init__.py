@@ -64,6 +64,9 @@ from .scores import (
     calculate_all_scores,
 )
 
+# ATR (Average True Range)
+from .atr import calculate_true_range, calculate_atr, calculate_atr_series
+
 __all__ = [
     # Candle Range (EPCH v1.0)
     "calculate_candle_range_pct",
@@ -107,4 +110,8 @@ __all__ = [
     "calculate_short_score",
     "calculate_scores",
     "calculate_all_scores",
+    # ATR (Average True Range)
+    "calculate_true_range",
+    "calculate_atr",
+    "calculate_atr_series",
 ]

@@ -105,10 +105,10 @@ class BacktestRunnerWindow(QMainWindow):
         """Create the control panel with date selector and run button."""
         frame = QFrame()
         frame.setObjectName("controlPanel")
-        frame.setFixedHeight(130)
+        frame.setFixedHeight(165)
 
         layout = QHBoxLayout(frame)
-        layout.setContentsMargins(20, 20, 20, 25)
+        layout.setContentsMargins(20, 15, 20, 15)
         layout.setSpacing(30)
 
         # Date Selection
@@ -124,12 +124,18 @@ class BacktestRunnerWindow(QMainWindow):
 
         date_layout.addWidget(date_label)
         date_layout.addWidget(self.date_edit)
+        date_layout.addStretch()
         layout.addLayout(date_layout)
 
-        # Secondary Processors
-        processors_layout = QVBoxLayout()
+        # Secondary Processors - two columns for compact layout
+        processors_outer = QVBoxLayout()
         processors_label = QLabel("PROCESSORS")
         processors_label.setObjectName("sectionLabel")
+        processors_outer.addWidget(processors_label)
+
+        # Row 1: Data processors
+        proc_row1 = QHBoxLayout()
+        proc_row1.setSpacing(20)
 
         self.m1_bars_checkbox = QCheckBox("Fetch M1 Bars")
         self.m1_bars_checkbox.setChecked(False)
@@ -147,10 +153,55 @@ class BacktestRunnerWindow(QMainWindow):
             "Writes to m1_indicator_bars_2 table"
         )
 
-        processors_layout.addWidget(processors_label)
-        processors_layout.addWidget(self.m1_bars_checkbox)
-        processors_layout.addWidget(self.m1_indicators_checkbox)
-        layout.addLayout(processors_layout)
+        proc_row1.addWidget(self.m1_bars_checkbox)
+        proc_row1.addWidget(self.m1_indicators_checkbox)
+        processors_outer.addLayout(proc_row1)
+
+        # Row 2: ATR Stop processors
+        proc_row2 = QHBoxLayout()
+        proc_row2.setSpacing(20)
+
+        self.m1_atr_stop_checkbox = QCheckBox("M1 ATR Stop Analysis")
+        self.m1_atr_stop_checkbox.setChecked(False)
+        self.m1_atr_stop_checkbox.setToolTip(
+            "Calculate M1 ATR(14) stop outcomes\n"
+            "R-multiple targets (1R-5R) with M1 bar simulation\n"
+            "Requires M1 Indicators populated first\n"
+            "Writes to m1_atr_stop_2 table"
+        )
+
+        self.m5_atr_stop_checkbox = QCheckBox("M5 ATR Stop Analysis")
+        self.m5_atr_stop_checkbox.setChecked(False)
+        self.m5_atr_stop_checkbox.setToolTip(
+            "Calculate M5 ATR(14) stop outcomes\n"
+            "R-multiple targets (1R-5R) with M1 bar simulation\n"
+            "Wider stop than M1 ATR for cross-timeframe comparison\n"
+            "Requires M1 Indicators populated first\n"
+            "Writes to m5_atr_stop_2 table"
+        )
+
+        proc_row2.addWidget(self.m1_atr_stop_checkbox)
+        proc_row2.addWidget(self.m5_atr_stop_checkbox)
+        processors_outer.addLayout(proc_row2)
+
+        # Row 3: Consolidation processor
+        proc_row3 = QHBoxLayout()
+        proc_row3.setSpacing(20)
+
+        self.trades_consolidated_checkbox = QCheckBox("Consolidate Trades")
+        self.trades_consolidated_checkbox.setChecked(False)
+        self.trades_consolidated_checkbox.setToolTip(
+            "Consolidate trades_2 + m5_atr_stop_2 into trades_m5_r_win_2\n"
+            "Denormalized table for 11_trade_reel highlight viewer\n"
+            "Requires M5 ATR Stop populated first\n"
+            "Writes to trades_m5_r_win_2 table"
+        )
+
+        proc_row3.addWidget(self.trades_consolidated_checkbox)
+        proc_row3.addStretch()
+        processors_outer.addLayout(proc_row3)
+
+        layout.addLayout(processors_outer)
 
         layout.addStretch()
 
@@ -168,6 +219,7 @@ class BacktestRunnerWindow(QMainWindow):
 
         progress_layout.addWidget(progress_label)
         progress_layout.addWidget(self.progress_bar)
+        progress_layout.addStretch()
         layout.addLayout(progress_layout)
 
         layout.addSpacing(20)
@@ -279,7 +331,10 @@ class BacktestRunnerWindow(QMainWindow):
             f"    2. Run EPCH1-4 entry detection on S15 bars\n"
             f"    3. Export entries to Supabase trades_2 table\n"
             f"    4. [Optional] Fetch M1 bars for secondary analysis\n"
-            f"    5. [Optional] Calculate M1 indicator bars\n\n"
+            f"    5. [Optional] Calculate M1 indicator bars\n"
+            f"    6. [Optional] M1 ATR stop analysis (R-multiple targets)\n"
+            f"    7. [Optional] M5 ATR stop analysis (R-multiple targets)\n"
+            f"    8. [Optional] Consolidate trades (trades_m5_r_win_2)\n\n"
         )
 
     def _append_terminal(self, text: str, color: str = None):
@@ -351,6 +406,9 @@ class BacktestRunnerWindow(QMainWindow):
         selected_date = self.date_edit.date().toString("yyyy-MM-dd")
         run_m1_bars = self.m1_bars_checkbox.isChecked()
         run_m1_indicators = self.m1_indicators_checkbox.isChecked()
+        run_m1_atr_stop = self.m1_atr_stop_checkbox.isChecked()
+        run_m5_atr_stop = self.m5_atr_stop_checkbox.isChecked()
+        run_trades_consolidated = self.trades_consolidated_checkbox.isChecked()
 
         # Build command
         scripts_dir = Path(__file__).parent.parent / "scripts"
@@ -372,6 +430,15 @@ class BacktestRunnerWindow(QMainWindow):
         if run_m1_indicators:
             args.append("--m1-indicators")
 
+        if run_m1_atr_stop:
+            args.append("--m1-atr-stop")
+
+        if run_m5_atr_stop:
+            args.append("--m5-atr-stop")
+
+        if run_trades_consolidated:
+            args.append("--trades-consolidated")
+
         # Start process
         self._process = QProcess(self)
         self._process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
@@ -390,6 +457,12 @@ class BacktestRunnerWindow(QMainWindow):
             self._append_terminal("M1 Bars: ENABLED (will fetch after entry detection)")
         if run_m1_indicators:
             self._append_terminal("M1 Indicators: ENABLED (will calculate after M1 bars)")
+        if run_m1_atr_stop:
+            self._append_terminal("M1 ATR Stop: ENABLED (R-multiple target analysis)")
+        if run_m5_atr_stop:
+            self._append_terminal("M5 ATR Stop: ENABLED (R-multiple target analysis)")
+        if run_trades_consolidated:
+            self._append_terminal("Consolidate Trades: ENABLED (trades_m5_r_win_2)")
         self._append_terminal(f"Script: {script_path}")
         self._append_terminal(f"{'='*70}\n")
 
@@ -404,6 +477,9 @@ class BacktestRunnerWindow(QMainWindow):
         self.date_edit.setEnabled(False)
         self.m1_bars_checkbox.setEnabled(False)
         self.m1_indicators_checkbox.setEnabled(False)
+        self.m1_atr_stop_checkbox.setEnabled(False)
+        self.m5_atr_stop_checkbox.setEnabled(False)
+        self.trades_consolidated_checkbox.setEnabled(False)
         self.terminal_status.setText("Running...")
         self.terminal_status.setStyleSheet(f"color: {COLORS['status_running']};")
         self._update_status("Running entry detection...")
@@ -459,6 +535,12 @@ class BacktestRunnerWindow(QMainWindow):
                 self._append_terminal(line, COLORS['status_running'])
             elif "[M1 INDICATORS]" in line:
                 self._append_terminal(line, COLORS['status_running'])
+            elif "[M1 ATR STOP]" in line:
+                self._append_terminal(line, COLORS['status_running'])
+            elif "[M5 ATR STOP]" in line:
+                self._append_terminal(line, COLORS['status_running'])
+            elif "[TRADES CONSOLIDATED]" in line:
+                self._append_terminal(line, COLORS['status_running'])
             else:
                 self._append_terminal(line)
 
@@ -471,6 +553,9 @@ class BacktestRunnerWindow(QMainWindow):
         self.date_edit.setEnabled(True)
         self.m1_bars_checkbox.setEnabled(True)
         self.m1_indicators_checkbox.setEnabled(True)
+        self.m1_atr_stop_checkbox.setEnabled(True)
+        self.m5_atr_stop_checkbox.setEnabled(True)
+        self.trades_consolidated_checkbox.setEnabled(True)
 
         if exit_code == 0:
             self.progress_bar.setValue(100)
@@ -494,6 +579,9 @@ class BacktestRunnerWindow(QMainWindow):
         self.date_edit.setEnabled(True)
         self.m1_bars_checkbox.setEnabled(True)
         self.m1_indicators_checkbox.setEnabled(True)
+        self.m1_atr_stop_checkbox.setEnabled(True)
+        self.m5_atr_stop_checkbox.setEnabled(True)
+        self.trades_consolidated_checkbox.setEnabled(True)
 
         self.terminal_status.setText("Error")
         self.terminal_status.setStyleSheet(f"color: {COLORS['status_error']};")

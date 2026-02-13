@@ -2,7 +2,7 @@
 -- EPOCH TRADING SYSTEM - M1 Indicator Bars v2 Table
 -- XIII Trading LLC
 -- ============================================================================
--- Reads raw M1 bars from m1_bars_2, computes 22 indicators + composite scores.
+-- Reads raw M1 bars from m1_bars_2, computes 22 indicators + 3 ATR + composite scores.
 -- Data range: Prior day 16:00 ET -> Trade day 16:00 ET (matches m1_bars_2)
 -- Source: Entry qualifier standard indicators + extended analysis indicators
 -- ============================================================================
@@ -48,6 +48,11 @@ CREATE TABLE IF NOT EXISTS m1_indicator_bars_2 (
     health_score INTEGER,                 -- 0-10 direction-agnostic quality score
     long_score INTEGER,                   -- 0-7 long composite score
     short_score INTEGER,                  -- 0-7 short composite score
+
+    -- ATR (Average True Range, 14-period)
+    atr_m1 NUMERIC(12, 6),               -- 14-period ATR on M1 bars
+    atr_m5 NUMERIC(12, 6),               -- 14-period ATR on M5 bars
+    atr_m15 NUMERIC(12, 6),              -- 14-period ATR on M15 bars
 
     -- Metadata
     bars_in_calculation INTEGER,

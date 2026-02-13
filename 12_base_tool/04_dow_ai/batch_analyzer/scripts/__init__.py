@@ -1,1 +1,0 @@
-"""Batch analyzer scripts."""

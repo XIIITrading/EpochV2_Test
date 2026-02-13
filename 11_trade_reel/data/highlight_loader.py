@@ -1,6 +1,6 @@
 """
 Epoch Trading System - Highlight Loader
-Queries trades_m5_r_win for highlight trades.
+Queries trades_m5_r_win_2 for highlight trades.
 """
 
 import psycopg2
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 class HighlightLoader:
-    """Load highlight trades from trades_m5_r_win table."""
+    """Load highlight trades from trades_m5_r_win_2 table."""
 
     def __init__(self):
         self.conn = None
@@ -58,7 +58,7 @@ class HighlightLoader:
         limit: int = 200
     ) -> List[HighlightTrade]:
         """
-        Fetch highlight trades from trades_m5_r_win.
+        Fetch highlight trades from trades_m5_r_win_2.
 
         Args:
             date_from: Start date (inclusive)
@@ -77,7 +77,7 @@ class HighlightLoader:
             return []
 
         query = """
-            SELECT * FROM trades_m5_r_win
+            SELECT * FROM trades_m5_r_win_2
             WHERE outcome = 'WIN'
               AND max_r_achieved >= %s
         """
@@ -225,7 +225,7 @@ class HighlightLoader:
             return ['EPCH1', 'EPCH2', 'EPCH3', 'EPCH4']
 
         query = """
-            SELECT DISTINCT model FROM trades_m5_r_win
+            SELECT DISTINCT model FROM trades_m5_r_win_2
             WHERE model IS NOT NULL AND outcome = 'WIN'
             ORDER BY model
         """
@@ -245,7 +245,7 @@ class HighlightLoader:
             return []
 
         query = """
-            SELECT DISTINCT ticker FROM trades_m5_r_win
+            SELECT DISTINCT ticker FROM trades_m5_r_win_2
             WHERE outcome = 'WIN' AND max_r_achieved >= 3
         """
         params = []
@@ -265,12 +265,12 @@ class HighlightLoader:
             return []
 
     def get_date_range(self) -> Tuple[Optional[date], Optional[date]]:
-        """Get min/max date range from trades_m5_r_win."""
+        """Get min/max date range from trades_m5_r_win_2."""
         if not self._ensure_connected():
             logger.warning("Skipping get_date_range - no database connection")
             return None, None
 
-        query = "SELECT MIN(date), MAX(date) FROM trades_m5_r_win"
+        query = "SELECT MIN(date), MAX(date) FROM trades_m5_r_win_2"
 
         try:
             with self.conn.cursor() as cur:
