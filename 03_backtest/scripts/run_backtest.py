@@ -48,6 +48,11 @@ M1_ATR_STOP_PROCESSOR = Path(__file__).parent.parent / "processor" / "secondary_
 M5_ATR_STOP_PROCESSOR = Path(__file__).parent.parent / "processor" / "secondary_analysis" / "m5_atr_stop_2"
 TRADES_M5_R_WIN_2_PROCESSOR = Path(__file__).parent.parent / "processor" / "secondary_analysis" / "trades_m5_r_win_2"
 
+# Indicator phase processors (run after m5_atr_stop_2 for outcomes)
+M1_TRADE_INDICATOR_PROCESSOR = Path(__file__).parent.parent / "processor" / "secondary_analysis" / "m1_trade_indicator_2"
+M1_RAMP_UP_INDICATOR_PROCESSOR = Path(__file__).parent.parent / "processor" / "secondary_analysis" / "m1_ramp_up_indicator_2"
+M1_POST_TRADE_INDICATOR_PROCESSOR = Path(__file__).parent.parent / "processor" / "secondary_analysis" / "m1_post_trade_indicator_2"
+
 
 def run_backtest_for_date(trade_date: str, dry_run: bool = False) -> List[EntryRecord]:
     """
@@ -334,6 +339,102 @@ def run_trades_consolidated_processor():
         return False
 
 
+def run_m1_trade_indicator_processor():
+    """Run the M1 trade indicator secondary processor."""
+    print(f"\n{'='*70}")
+    print("[M1 TRADE IND] Populating m1_trade_indicator_2 (entry bar snapshots)")
+    print(f"{'='*70}")
+
+    runner_script = M1_TRADE_INDICATOR_PROCESSOR / "runner.py"
+
+    if not runner_script.exists():
+        print(f"  ERROR: M1 trade indicator runner not found: {runner_script}")
+        return False
+
+    try:
+        result = subprocess.run(
+            [sys.executable, str(runner_script), "--verbose"],
+            cwd=str(M1_TRADE_INDICATOR_PROCESSOR),
+            capture_output=False,
+            text=True
+        )
+
+        if result.returncode == 0:
+            print(f"\n[M1 TRADE IND] Completed successfully")
+            return True
+        else:
+            print(f"\n[M1 TRADE IND] Failed with exit code {result.returncode}")
+            return False
+
+    except Exception as e:
+        print(f"\n[M1 TRADE IND] Error: {e}")
+        return False
+
+
+def run_m1_ramp_up_indicator_processor():
+    """Run the M1 ramp-up indicator secondary processor."""
+    print(f"\n{'='*70}")
+    print("[M1 RAMP-UP] Populating m1_ramp_up_indicator_2 (25-bar pre-entry)")
+    print(f"{'='*70}")
+
+    runner_script = M1_RAMP_UP_INDICATOR_PROCESSOR / "runner.py"
+
+    if not runner_script.exists():
+        print(f"  ERROR: M1 ramp-up indicator runner not found: {runner_script}")
+        return False
+
+    try:
+        result = subprocess.run(
+            [sys.executable, str(runner_script), "--verbose"],
+            cwd=str(M1_RAMP_UP_INDICATOR_PROCESSOR),
+            capture_output=False,
+            text=True
+        )
+
+        if result.returncode == 0:
+            print(f"\n[M1 RAMP-UP] Completed successfully")
+            return True
+        else:
+            print(f"\n[M1 RAMP-UP] Failed with exit code {result.returncode}")
+            return False
+
+    except Exception as e:
+        print(f"\n[M1 RAMP-UP] Error: {e}")
+        return False
+
+
+def run_m1_post_trade_indicator_processor():
+    """Run the M1 post-trade indicator secondary processor."""
+    print(f"\n{'='*70}")
+    print("[M1 POST-TRADE] Populating m1_post_trade_indicator_2 (25-bar post-entry)")
+    print(f"{'='*70}")
+
+    runner_script = M1_POST_TRADE_INDICATOR_PROCESSOR / "runner.py"
+
+    if not runner_script.exists():
+        print(f"  ERROR: M1 post-trade indicator runner not found: {runner_script}")
+        return False
+
+    try:
+        result = subprocess.run(
+            [sys.executable, str(runner_script), "--verbose"],
+            cwd=str(M1_POST_TRADE_INDICATOR_PROCESSOR),
+            capture_output=False,
+            text=True
+        )
+
+        if result.returncode == 0:
+            print(f"\n[M1 POST-TRADE] Completed successfully")
+            return True
+        else:
+            print(f"\n[M1 POST-TRADE] Failed with exit code {result.returncode}")
+            return False
+
+    except Exception as e:
+        print(f"\n[M1 POST-TRADE] Error: {e}")
+        return False
+
+
 def main():
     """Main entry point"""
     parser = argparse.ArgumentParser(
@@ -363,6 +464,12 @@ Examples:
                         help='Calculate M5 ATR stop outcomes (R-multiple targets)')
     parser.add_argument('--trades-consolidated', action='store_true',
                         help='Consolidate trades into trades_m5_r_win_2 for trade_reel')
+    parser.add_argument('--m1-trade-ind', action='store_true',
+                        help='Populate m1_trade_indicator_2 (entry bar indicator snapshot)')
+    parser.add_argument('--m1-ramp-up', action='store_true',
+                        help='Populate m1_ramp_up_indicator_2 (25-bar pre-entry indicators)')
+    parser.add_argument('--m1-post-trade', action='store_true',
+                        help='Populate m1_post_trade_indicator_2 (25-bar post-entry indicators)')
 
     args = parser.parse_args()
 
@@ -380,6 +487,9 @@ Examples:
     print(f"M1 ATR Stop: {'Enabled' if args.m1_atr_stop else 'Disabled'}")
     print(f"M5 ATR Stop: {'Enabled' if args.m5_atr_stop else 'Disabled'}")
     print(f"Consolidate Trades: {'Enabled' if args.trades_consolidated else 'Disabled'}")
+    print(f"M1 Trade Indicator: {'Enabled' if args.m1_trade_ind else 'Disabled'}")
+    print(f"M1 Ramp-Up Indicator: {'Enabled' if args.m1_ramp_up else 'Disabled'}")
+    print(f"M1 Post-Trade Indicator: {'Enabled' if args.m1_post_trade else 'Disabled'}")
 
     # Run entry detection
     entries = run_backtest_for_date(args.date, dry_run=args.dry_run)
@@ -430,6 +540,17 @@ Examples:
         # Run trades consolidation processor if requested
         if args.trades_consolidated and not args.dry_run:
             run_trades_consolidated_processor()
+
+        # Run indicator phase processors if requested
+        # (These require m5_atr_stop_2 outcomes to exist)
+        if args.m1_trade_ind and not args.dry_run:
+            run_m1_trade_indicator_processor()
+
+        if args.m1_ramp_up and not args.dry_run:
+            run_m1_ramp_up_indicator_processor()
+
+        if args.m1_post_trade and not args.dry_run:
+            run_m1_post_trade_indicator_processor()
 
     else:
         print("\nNo entries detected.")

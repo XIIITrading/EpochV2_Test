@@ -1,152 +1,252 @@
-# 04_indicators - Indicator Edge Testing v1.0
+# 04_indicators - Indicator Analysis v2.0
 
 ## Module Overview
 
-PyQt6-based edge testing framework for validating indicator effectiveness using M1 bar data. Tests statistical significance of various indicators against trade outcomes to identify actionable trading edges.
+PyQt6-based three-phase indicator analysis tool that examines how 7 trading indicators behave before, at, and after trade entry. Uses pre-computed M1 indicator bar data joined with trade outcomes to identify actionable patterns. Built for future consumption by `10_machine_learning`.
 
 ## Architecture
 
 ```
 04_indicators/
-├── app.py                       # Module launcher entry point
-├── config.py                    # Module configuration
-├── CLAUDE.md                    # AI context documentation
-├── indicator_gui/
+├── app.py                          # PyQt6 entry point
+├── config.py                       # DB config, table names, indicator registry
+├── CLAUDE.md                       # AI context (this file)
+├── data/
 │   ├── __init__.py
-│   ├── main.py                  # PyQt6 app entry point
-│   ├── main_window.py           # Main window with terminal output
-│   └── styles.py                # Dark theme stylesheet
-├── scripts/
+│   └── provider.py                 # DataProvider - all SQL queries via psycopg2
+├── ui/
 │   ├── __init__.py
-│   └── run_edge_tests.py        # CLI edge test runner
-├── edge_testing/
-│   ├── __init__.py
-│   ├── base_tester.py           # Database access, statistical tests
-│   └── edge_tests.py            # Individual indicator test functions
-└── results/                     # Generated markdown reports
+│   ├── styles.py                   # Re-exports from 00_shared/ui/styles.py
+│   ├── main_window.py              # MainWindow with filter panel + 5 tabs
+│   └── tabs/
+│       ├── __init__.py
+│       ├── ramp_up_tab.py          # Tab 1: Pre-entry indicator behavior (25 bars)
+│       ├── entry_snapshot_tab.py   # Tab 2: Entry-bar indicator state
+│       ├── post_trade_tab.py       # Tab 3: Post-entry indicator evolution (25 bars)
+│       ├── indicator_deep_dive_tab.py  # Tab 4: Single-indicator deep analysis
+│       └── composite_setup_tab.py  # Tab 5: Multi-indicator setup scoring
+├── docs/
+│   └── implementation_plan.md      # Full design document (1200+ lines)
+└── _archive/                       # V1 edge testing code (preserved)
 ```
 
-## Entry Points
+## Entry Point
 
 ```bash
-# Launch GUI (primary usage)
 python 04_indicators/app.py
-
-# CLI mode (for automation)
-python 04_indicators/scripts/run_edge_tests.py
-python 04_indicators/scripts/run_edge_tests.py --indicators candle_range,volume_delta
-python 04_indicators/scripts/run_edge_tests.py --date-from 2026-01-01 --verbose
-python 04_indicators/scripts/run_edge_tests.py --export results.md
 ```
 
-## Indicators Tested
+## Three-Phase Analysis Model
 
-| Indicator | Tests | Data Source |
-|-----------|-------|-------------|
-| **Candle Range** | Threshold, Quintile, Absorption | M1 bar OHLC |
-| **Volume Delta** | Sign, Alignment, Magnitude | m1_indicator_bars.vol_delta |
-| **Volume ROC** | Category, Quintile | m1_indicator_bars.vol_roc |
-| **CVD Slope** | Direction, Alignment | m1_indicator_bars.cvd_slope |
-| **SMA Analysis** | Spread Direction, Price Position | m1_indicator_bars.sma9, sma21 |
-| **Market Structure** | H1/M15/M5 Direction, MTF Alignment | entry_indicators |
+The module examines indicators across three time phases relative to trade entry:
 
-## Data Flow
+```
+Phase 1: RAMP-UP          Phase 2: ENTRY       Phase 3: POST-TRADE
+(25 bars before entry)     (1 bar snapshot)     (25 bars after entry)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+bar_seq 0 ────── 24    │   prior M1 bar    │   bar_seq 0 ────── 24
+                        │                    │   (0 = entry candle)
+```
 
-1. **Load Data**: Fetch trades joined with M1 indicator bars (prior bar to avoid look-ahead bias)
-2. **Calculate Metrics**: Derive indicator-specific metrics (quintiles, alignment, categories)
-3. **Run Statistical Tests**: Chi-square for categorical, Spearman for ordinal
-4. **Evaluate Edges**: Check p-value < 0.05 AND effect size > 3pp
-5. **Generate Reports**: Output to terminal and optional markdown export
+**Look-ahead bias protection**: Entry candle is NOT included in ramp-up data. The "entry snapshot" uses the M1 bar that COMPLETED before entry (floor to minute - 1 minute).
 
-## Statistical Test Criteria
+## Data Sources (Supabase Tables)
 
-An edge is validated when ALL conditions are met:
-- **p-value < 0.05**: Statistically significant
-- **Effect size > 3pp**: Practically significant (percentage point difference)
-- **Confidence >= MEDIUM**: Minimum 30 trades per group (100+ for HIGH)
+### Input Tables (populated by 03_backtest processors)
 
-## Segments Tested
+| Table | Rows Per Trade | Purpose | Primary Key |
+|-------|---------------|---------|-------------|
+| `m1_trade_indicator_2` | 1 | Entry snapshot with trade context + outcome | (trade_id) |
+| `m1_ramp_up_indicator_2` | 25 | Pre-entry indicator evolution | (trade_id, bar_sequence) |
+| `m1_post_trade_indicator_2` | 25 | Post-entry indicator evolution | (trade_id, bar_sequence) |
 
-Each indicator is tested across multiple segments:
-- **ALL**: All trades combined
-- **LONG / SHORT**: By trade direction
-- **CONTINUATION / REJECTION**: By trade type (EPCH1+3 vs EPCH2+4)
-- **EPCH1, EPCH2, EPCH3, EPCH4**: Individual entry models
+### Source Tables (upstream)
 
-## Key Findings from V1 Testing
+| Table | Purpose |
+|-------|---------|
+| `trades_2` | Trade records (entry time, model, direction, zone type) |
+| `m5_atr_stop_2` | Trade outcomes (result='WIN'/'LOSS', max_r, pnl_r) |
+| `m1_indicator_bars_2` | M1 bar snapshots with 35 indicator columns |
+
+### Outcome Handling
+
+**Critical**: All three processors use INNER JOIN with `m5_atr_stop_2`. Trades without outcomes are **never inserted** - they are skipped entirely. The viewer shows an amber warning when trades exist in `trades_2` but are missing from `m1_trade_indicator_2`.
+
+## Indicators Analyzed
+
+### Continuous (5)
+| Column | Label | Key Thresholds |
+|--------|-------|---------------|
+| `candle_range_pct` | Candle Range % | <0.12% = ABSORPTION (skip), >=0.15% = NORMAL |
+| `vol_delta_roll` | Volume Delta (5-bar) | Sign alignment with direction |
+| `vol_roc` | Volume ROC | >=30% = ELEVATED activity |
+| `sma_spread_pct` | SMA Spread % | >=0.15% = WIDE (trending) |
+| `cvd_slope` | CVD Slope | >0.1 bullish, <-0.1 bearish |
+
+### Categorical (6)
+| Column | Label | States |
+|--------|-------|--------|
+| `sma_config` | SMA Configuration | BULL, BEAR, CROSS_UP, CROSS_DOWN |
+| `sma_momentum_label` | SMA Momentum | EXPANDING, NARROWING, FLAT |
+| `price_position` | Price Position | ABOVE_BOTH, BETWEEN, BELOW_BOTH |
+| `m5_structure` | M5 Structure | BULL, BEAR, NEUTRAL |
+| `m15_structure` | M15 Structure | BULL, BEAR, NEUTRAL |
+| `h1_structure` | H1 Structure | BULL, BEAR, NEUTRAL |
+
+## Tab Specifications
+
+### Tab 1: Ramp-Up Analysis
+- **Purpose**: How do indicators behave in the 25 minutes leading up to entry?
+- **Charts**: 5 multi-panel line charts (winners vs losers for each continuous indicator)
+- **Features**: Shaded "ramp-up zone" (last 10 bars), summary statistics for bars 15-24
+- **Key insight**: Do winning trades show different indicator patterns before entry?
+
+### Tab 2: Entry Snapshot
+- **Purpose**: What does the indicator state look like at the moment of entry?
+- **Charts**: Summary cards (Total Trades, Win Rate, Avg R) + categorical win rate bars (2x3) + continuous quintile win rate bars (2x3)
+- **Features**: 50% reference line on all charts, green/red coloring by win rate
+- **Key insight**: Which indicator states at entry predict winners?
+
+### Tab 3: Post-Trade Analysis
+- **Purpose**: How do indicators evolve in the 25 minutes after entry?
+- **Charts**: 5 multi-panel line charts (winners vs losers), entry marker at bar 0
+- **Features**: Early divergence analysis (first 5 bars comparison)
+- **Key insight**: Can early indicator behavior predict trade outcome?
+
+### Tab 4: Indicator Deep Dive
+- **Purpose**: Deep analysis of a single selected indicator across all three phases
+- **Charts**: Three-phase progression chart (bars -24 to +24), win rate by quintile/state, model x direction breakdown table
+- **Features**: Dropdown selector for all 11 indicators
+- **Key insight**: Full lifecycle view of any single indicator
+
+### Tab 5: Composite Setup Analysis
+- **Purpose**: How do indicators work together to create ideal setups?
+- **Charts**: Setup score (0-7) distribution with win rate overlay (dual y-axis)
+- **Table**: Top 10 and Bottom 10 indicator combinations by win rate
+- **Setup score components** (each +1 point):
+  1. candle_range_pct >= 0.15%
+  2. vol_roc >= 30%
+  3. sma_spread_pct >= 0.15%
+  4. SMA config aligned with direction (BULL+LONG or BEAR+SHORT)
+  5. M5 structure aligned with direction
+  6. H1 structure == NEUTRAL (strongest edge: +36pp)
+  7. CVD slope aligned with direction (>0.1 for LONG, <-0.1 for SHORT)
+
+## DataProvider API (data/provider.py)
+
+Key methods:
+```python
+provider.connect()                          # Open psycopg2 connection
+provider.get_tickers() -> List[str]         # Distinct tickers from trades_2
+provider.get_date_range() -> Tuple          # Min/max dates
+provider.get_pending_count() -> int         # Trades missing from indicator tables
+provider.get_entry_data(filters) -> DataFrame   # Filtered m1_trade_indicator_2
+provider.get_trade_ids(filters) -> List[str]    # Trade IDs matching filters
+provider.get_ramp_up_averages(trade_ids)        # Avg by bar_sequence + outcome
+provider.get_post_trade_averages(trade_ids)     # Avg by bar_sequence + outcome
+provider.get_win_rate_by_state(trade_ids, col)  # Categorical indicator analysis
+provider.get_win_rate_by_quintile(trade_ids, col)   # Continuous NTILE(5) analysis
+provider.get_setup_combinations(trade_ids, min_trades)  # Multi-indicator combos
+provider.get_three_phase_averages(trade_ids, col)   # UNION ALL ramp+post
+```
+
+## UI Architecture
+
+- **Layout**: QSplitter with fixed filter panel (220px) + QTabWidget
+- **Data loading**: QThread (DataLoadThread) for non-blocking DB queries
+- **Chart rendering**: Plotly -> PNG via kaleido -> QPixmap -> QLabel
+- **Filter panel**: Model, Direction, Ticker, Outcome (Winners/Losers/All), Date range
+- **Warning system**: Amber label when trades are pending outcome analysis
+
+## Filter Panel Options
+
+| Filter | Type | Values |
+|--------|------|--------|
+| Model | QComboBox | All, EPCH1, EPCH2, EPCH3, EPCH4 |
+| Direction | QComboBox | All, LONG, SHORT |
+| Ticker | QComboBox | All, + dynamic from DB |
+| Outcome | QComboBox | All, Winners, Losers |
+| Date From | QDateEdit | Min date from DB |
+| Date To | QDateEdit | Max date from DB |
+
+## Bar Timing Logic
+
+Entry at S15 (15-second bars) maps to M1 bars:
+```
+Entry time:  09:35:15
+Floor to M1: 09:35:00  (entry candle start)
+Prior bar:   09:34:00  (last completed M1 bar = entry snapshot)
+
+Ramp-up:     25 bars ending at 09:34:00 (bar_sequence 0-24)
+Post-trade:  25 bars starting at 09:35:00 (bar_sequence 0-24, 0 = entry candle)
+```
+
+## Key Indicator Findings (from V1 Testing)
 
 ### Validated Edges (Strongest First)
-
-| Indicator | Test | Segment | Effect Size |
-|-----------|------|---------|-------------|
-| Candle Range | Quintile | ALL | 28.7pp |
-| H1 Structure | Direction | ALL | 39.7pp |
-| CVD Slope | Category | SHORT | 27pp |
-| Volume Delta | Magnitude | LONG | 20pp |
-| SMA | Spread Direction | SHORT | 25pp |
+| Indicator | Finding | Effect |
+|-----------|---------|--------|
+| H1 Structure | NEUTRAL beats BULL/BEAR | +36pp win rate |
+| Candle Range | <0.12% = absorption zone | 33% WR (universal skip) |
+| Volume Delta | MISALIGNED beats ALIGNED | +5-21pp (paradoxical) |
+| CVD Slope | Against-slope trades win | Exhaustion captures |
+| SMA Spread | Direction matters for SHORT | +25pp |
 
 ### Universal Skip Filter
-- **Absorption Zone**: Candle range < 0.12% = 33% WR (skip all trades)
+- **Absorption Zone**: candle_range_pct < 0.12% = 33% WR -> skip ALL trades
 
-### Paradoxical Findings
-- MISALIGNED volume delta beats ALIGNED (5-21pp edge)
-- NEUTRAL H1 structure beats BULL/BEAR
-- Trading against order flow captures exhaustion/reversals
+## Processor Population (03_backtest)
 
-## Database Tables Used
+The three indicator tables are populated by secondary processors in `03_backtest`:
 
-### Input Tables
-- `trades`: Trade records with entry times
-- `m1_indicator_bars`: M1 bar snapshots with indicator values
-- `entry_indicators`: Entry-time structure snapshots
-- `stop_analysis`: Win/loss outcomes by stop type
+```bash
+# Create tables
+python 03_backtest/processor/secondary_analysis/m1_trade_indicator_2/runner.py --schema
+python 03_backtest/processor/secondary_analysis/m1_ramp_up_indicator_2/runner.py --schema
+python 03_backtest/processor/secondary_analysis/m1_post_trade_indicator_2/runner.py --schema
 
-### Join Logic
-Entry at S15 uses PRIOR M1 bar to avoid look-ahead bias:
-```sql
--- Entry at 09:35:15 -> use M1 bar at 09:34:00
-(date_trunc('minute', entry_time) - INTERVAL '1 minute')::time AS prior_bar_time
+# Check status
+python 03_backtest/processor/secondary_analysis/m1_trade_indicator_2/runner.py --status
+
+# Populate (via run_backtest.py)
+python 03_backtest/scripts/run_backtest.py --m1-trade-ind
+python 03_backtest/scripts/run_backtest.py --m1-ramp-up
+python 03_backtest/scripts/run_backtest.py --m1-post-trade
 ```
-
-## GUI Features
-
-- **Indicator Selection**: Multi-select list with all 7 indicators
-- **Filters**: Stop type, optional date range
-- **Terminal Output**: Real-time progress with color coding
-- **Progress Bar**: Tracks completion via `[X/N]` pattern
-- **Export Option**: Generate markdown report
-
-### Terminal Color Coding
-- **GREEN** (#26a69a): Edge detected, success
-- **RED** (#ef5350): Errors, failures
-- **ORANGE** (#ff9800): Warnings, no edge, low data
-- **GRAY** (#808080): Section dividers
-- **WHITE** (#e8e8e8): Default output
 
 ## Configuration (config.py)
 
-Key settings:
-- `DB_CONFIG`: Supabase connection
-- `P_VALUE_THRESHOLD`: 0.05 (statistical significance)
-- `EFFECT_SIZE_THRESHOLD`: 3.0 (practical significance in pp)
-- `MIN_SAMPLE_SIZE_HIGH`: 100 (HIGH confidence)
-- `MIN_SAMPLE_SIZE_MEDIUM`: 30 (MEDIUM confidence)
-- `INDICATORS`: Registry of all indicator tests
-- `DEFAULT_INDICATOR_ORDER`: Strongest edges first
+```python
+TABLE_TRADES = "trades_2"
+TABLE_M5_ATR = "m5_atr_stop_2"
+TABLE_RAMP_UP = "m1_ramp_up_indicator_2"
+TABLE_TRADE_IND = "m1_trade_indicator_2"
+TABLE_POST_TRADE = "m1_post_trade_indicator_2"
+TABLE_INDICATORS = "m1_indicator_bars_2"
+
+THRESHOLDS = {
+    'candle_range_pct': {'good': 0.15, 'low': 0.12},
+    'vol_roc': {'elevated': 30.0, 'normal': 0.0},
+    'sma_spread_pct': {'wide': 0.15},
+}
+
+RAMP_UP_BARS = 25
+POST_TRADE_BARS = 25
+```
 
 ## Dependencies
 
 - PyQt6 (GUI framework)
-- psycopg2 (PostgreSQL)
+- psycopg2 (PostgreSQL via Supabase)
 - pandas (data manipulation)
+- plotly + kaleido (chart generation -> PNG)
 - numpy (numerical operations)
-- scipy (statistical tests)
 
 ## Development Notes
 
-- Based on DOW AI / 03_backtest UI pattern
-- Core logic from 08_base_tool/03_indicators
-- Uses QProcess for subprocess management
-- Progress tracking via stdout parsing
-- Chi-square test for categorical variables
-- Spearman correlation for ordinal quintiles
+- Follows `05_system_analysis` hybrid pattern: Plotly charts -> PNG -> QPixmap display
+- No new indicator calculations - all values come from `m1_indicator_bars_2`
+- DataProvider uses psycopg2 directly (not SQLAlchemy)
+- V1 edge testing code preserved in `_archive/` directory
+- All processors use ON CONFLICT upsert for idempotent re-runs
+- Setup score (0-7) designed for future ML feature engineering

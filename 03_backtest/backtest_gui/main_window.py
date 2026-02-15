@@ -105,7 +105,7 @@ class BacktestRunnerWindow(QMainWindow):
         """Create the control panel with date selector and run button."""
         frame = QFrame()
         frame.setObjectName("controlPanel")
-        frame.setFixedHeight(165)
+        frame.setFixedHeight(215)
 
         layout = QHBoxLayout(frame)
         layout.setContentsMargins(20, 15, 20, 15)
@@ -127,11 +127,30 @@ class BacktestRunnerWindow(QMainWindow):
         date_layout.addStretch()
         layout.addLayout(date_layout)
 
-        # Secondary Processors - two columns for compact layout
+        # Secondary Processors - compact grid layout
         processors_outer = QVBoxLayout()
+        processors_outer.setSpacing(4)
+
+        # Header row with label + Run All toggle
+        proc_header = QHBoxLayout()
         processors_label = QLabel("PROCESSORS")
         processors_label.setObjectName("sectionLabel")
-        processors_outer.addWidget(processors_label)
+        proc_header.addWidget(processors_label)
+        proc_header.addSpacing(15)
+
+        self.run_all_checkbox = QCheckBox("Run All Secondary")
+        self.run_all_checkbox.setChecked(False)
+        self.run_all_checkbox.setToolTip(
+            "Toggle ALL secondary processors on/off\n"
+            "Runs the full pipeline after entry detection"
+        )
+        self.run_all_checkbox.setStyleSheet(
+            f"QCheckBox {{ color: {COLORS['status_running']}; font-weight: bold; }}"
+        )
+        self.run_all_checkbox.stateChanged.connect(self._on_run_all_toggled)
+        proc_header.addWidget(self.run_all_checkbox)
+        proc_header.addStretch()
+        processors_outer.addLayout(proc_header)
 
         # Row 1: Data processors
         proc_row1 = QHBoxLayout()
@@ -184,7 +203,7 @@ class BacktestRunnerWindow(QMainWindow):
         proc_row2.addWidget(self.m5_atr_stop_checkbox)
         processors_outer.addLayout(proc_row2)
 
-        # Row 3: Consolidation processor
+        # Row 3: Consolidation + Indicator processors
         proc_row3 = QHBoxLayout()
         proc_row3.setSpacing(20)
 
@@ -197,9 +216,49 @@ class BacktestRunnerWindow(QMainWindow):
             "Writes to trades_m5_r_win_2 table"
         )
 
+        self.m1_trade_ind_checkbox = QCheckBox("Entry Indicators")
+        self.m1_trade_ind_checkbox.setChecked(False)
+        self.m1_trade_ind_checkbox.setToolTip(
+            "Snapshot M1 indicator bar at entry (prior completed bar)\n"
+            "Denormalized with trade context + outcome\n"
+            "Requires M5 ATR Stop outcomes\n"
+            "Writes to m1_trade_indicator_2 table"
+        )
+
         proc_row3.addWidget(self.trades_consolidated_checkbox)
-        proc_row3.addStretch()
+        proc_row3.addWidget(self.m1_trade_ind_checkbox)
         processors_outer.addLayout(proc_row3)
+
+        # Row 4: Ramp-Up + Post-Trade indicator processors
+        proc_row4 = QHBoxLayout()
+        proc_row4.setSpacing(20)
+
+        self.m1_ramp_up_checkbox = QCheckBox("Ramp-Up Indicators")
+        self.m1_ramp_up_checkbox.setChecked(False)
+        self.m1_ramp_up_checkbox.setToolTip(
+            "25 M1 indicator bars before entry (pre-entry evolution)\n"
+            "bar_sequence 0 (oldest) to 24 (just before entry candle)\n"
+            "Requires M5 ATR Stop outcomes\n"
+            "Writes to m1_ramp_up_indicator_2 table"
+        )
+
+        self.m1_post_trade_checkbox = QCheckBox("Post-Trade Indicators")
+        self.m1_post_trade_checkbox.setChecked(False)
+        self.m1_post_trade_checkbox.setToolTip(
+            "25 M1 indicator bars after entry (post-entry evolution)\n"
+            "bar_sequence 0 (entry candle) to 24\n"
+            "Outcome stamped on every row for aggregation\n"
+            "Requires M5 ATR Stop outcomes\n"
+            "Writes to m1_post_trade_indicator_2 table"
+        )
+
+        proc_row4.addWidget(self.m1_ramp_up_checkbox)
+        proc_row4.addWidget(self.m1_post_trade_checkbox)
+        processors_outer.addLayout(proc_row4)
+
+        # Connect individual checkboxes to sync Run All state
+        for cb in self._get_all_processor_checkboxes():
+            cb.stateChanged.connect(self._on_individual_checkbox_changed)
 
         layout.addLayout(processors_outer)
 
@@ -334,7 +393,11 @@ class BacktestRunnerWindow(QMainWindow):
             f"    5. [Optional] Calculate M1 indicator bars\n"
             f"    6. [Optional] M1 ATR stop analysis (R-multiple targets)\n"
             f"    7. [Optional] M5 ATR stop analysis (R-multiple targets)\n"
-            f"    8. [Optional] Consolidate trades (trades_m5_r_win_2)\n\n"
+            f"    8. [Optional] Consolidate trades (trades_m5_r_win_2)\n"
+            f"    9. [Optional] Entry indicators (m1_trade_indicator_2)\n"
+            f"   10. [Optional] Ramp-up indicators (m1_ramp_up_indicator_2)\n"
+            f"   11. [Optional] Post-trade indicators (m1_post_trade_indicator_2)\n\n"
+            f"  Tip: Use 'Run All Secondary' to enable the full pipeline.\n\n"
         )
 
     def _append_terminal(self, text: str, color: str = None):
@@ -409,6 +472,9 @@ class BacktestRunnerWindow(QMainWindow):
         run_m1_atr_stop = self.m1_atr_stop_checkbox.isChecked()
         run_m5_atr_stop = self.m5_atr_stop_checkbox.isChecked()
         run_trades_consolidated = self.trades_consolidated_checkbox.isChecked()
+        run_m1_trade_ind = self.m1_trade_ind_checkbox.isChecked()
+        run_m1_ramp_up = self.m1_ramp_up_checkbox.isChecked()
+        run_m1_post_trade = self.m1_post_trade_checkbox.isChecked()
 
         # Build command
         scripts_dir = Path(__file__).parent.parent / "scripts"
@@ -439,6 +505,15 @@ class BacktestRunnerWindow(QMainWindow):
         if run_trades_consolidated:
             args.append("--trades-consolidated")
 
+        if run_m1_trade_ind:
+            args.append("--m1-trade-ind")
+
+        if run_m1_ramp_up:
+            args.append("--m1-ramp-up")
+
+        if run_m1_post_trade:
+            args.append("--m1-post-trade")
+
         # Start process
         self._process = QProcess(self)
         self._process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
@@ -463,6 +538,12 @@ class BacktestRunnerWindow(QMainWindow):
             self._append_terminal("M5 ATR Stop: ENABLED (R-multiple target analysis)")
         if run_trades_consolidated:
             self._append_terminal("Consolidate Trades: ENABLED (trades_m5_r_win_2)")
+        if run_m1_trade_ind:
+            self._append_terminal("Entry Indicators: ENABLED (m1_trade_indicator_2)")
+        if run_m1_ramp_up:
+            self._append_terminal("Ramp-Up Indicators: ENABLED (m1_ramp_up_indicator_2)")
+        if run_m1_post_trade:
+            self._append_terminal("Post-Trade Indicators: ENABLED (m1_post_trade_indicator_2)")
         self._append_terminal(f"Script: {script_path}")
         self._append_terminal(f"{'='*70}\n")
 
@@ -475,11 +556,9 @@ class BacktestRunnerWindow(QMainWindow):
         self.run_button.setEnabled(False)
         self.stop_button.setEnabled(True)
         self.date_edit.setEnabled(False)
-        self.m1_bars_checkbox.setEnabled(False)
-        self.m1_indicators_checkbox.setEnabled(False)
-        self.m1_atr_stop_checkbox.setEnabled(False)
-        self.m5_atr_stop_checkbox.setEnabled(False)
-        self.trades_consolidated_checkbox.setEnabled(False)
+        self.run_all_checkbox.setEnabled(False)
+        for cb in self._get_all_processor_checkboxes():
+            cb.setEnabled(False)
         self.terminal_status.setText("Running...")
         self.terminal_status.setStyleSheet(f"color: {COLORS['status_running']};")
         self._update_status("Running entry detection...")
@@ -541,6 +620,12 @@ class BacktestRunnerWindow(QMainWindow):
                 self._append_terminal(line, COLORS['status_running'])
             elif "[TRADES CONSOLIDATED]" in line:
                 self._append_terminal(line, COLORS['status_running'])
+            elif "[M1 TRADE IND]" in line or "[TRADE INDICATOR]" in line:
+                self._append_terminal(line, COLORS['status_running'])
+            elif "[M1 RAMP-UP]" in line or "[RAMP-UP]" in line:
+                self._append_terminal(line, COLORS['status_running'])
+            elif "[M1 POST-TRADE]" in line or "[POST-TRADE]" in line:
+                self._append_terminal(line, COLORS['status_running'])
             else:
                 self._append_terminal(line)
 
@@ -551,11 +636,9 @@ class BacktestRunnerWindow(QMainWindow):
         self.run_button.setEnabled(True)
         self.stop_button.setEnabled(False)
         self.date_edit.setEnabled(True)
-        self.m1_bars_checkbox.setEnabled(True)
-        self.m1_indicators_checkbox.setEnabled(True)
-        self.m1_atr_stop_checkbox.setEnabled(True)
-        self.m5_atr_stop_checkbox.setEnabled(True)
-        self.trades_consolidated_checkbox.setEnabled(True)
+        self.run_all_checkbox.setEnabled(True)
+        for cb in self._get_all_processor_checkboxes():
+            cb.setEnabled(True)
 
         if exit_code == 0:
             self.progress_bar.setValue(100)
@@ -577,11 +660,9 @@ class BacktestRunnerWindow(QMainWindow):
         self.run_button.setEnabled(True)
         self.stop_button.setEnabled(False)
         self.date_edit.setEnabled(True)
-        self.m1_bars_checkbox.setEnabled(True)
-        self.m1_indicators_checkbox.setEnabled(True)
-        self.m1_atr_stop_checkbox.setEnabled(True)
-        self.m5_atr_stop_checkbox.setEnabled(True)
-        self.trades_consolidated_checkbox.setEnabled(True)
+        self.run_all_checkbox.setEnabled(True)
+        for cb in self._get_all_processor_checkboxes():
+            cb.setEnabled(True)
 
         self.terminal_status.setText("Error")
         self.terminal_status.setStyleSheet(f"color: {COLORS['status_error']};")
@@ -598,6 +679,39 @@ class BacktestRunnerWindow(QMainWindow):
         msg = error_messages.get(error, "Unknown error")
         self._append_terminal(f"\n[!] Error: {msg}", COLORS['status_error'])
         self._update_status(f"Error: {msg}")
+
+    def _get_all_processor_checkboxes(self) -> list:
+        """Return all individual processor checkboxes (not Run All)."""
+        return [
+            self.m1_bars_checkbox,
+            self.m1_indicators_checkbox,
+            self.m1_atr_stop_checkbox,
+            self.m5_atr_stop_checkbox,
+            self.trades_consolidated_checkbox,
+            self.m1_trade_ind_checkbox,
+            self.m1_ramp_up_checkbox,
+            self.m1_post_trade_checkbox,
+        ]
+
+    @pyqtSlot(int)
+    def _on_run_all_toggled(self, state: int):
+        """Toggle all processor checkboxes when Run All is changed."""
+        checked = state == Qt.CheckState.Checked.value
+        # Block signals to avoid recursive updates
+        for cb in self._get_all_processor_checkboxes():
+            cb.blockSignals(True)
+            cb.setChecked(checked)
+            cb.blockSignals(False)
+
+    @pyqtSlot(int)
+    def _on_individual_checkbox_changed(self, _state: int):
+        """Sync Run All checkbox when individual checkboxes change."""
+        all_checkboxes = self._get_all_processor_checkboxes()
+        all_checked = all(cb.isChecked() for cb in all_checkboxes)
+        # Block signals to avoid triggering _on_run_all_toggled
+        self.run_all_checkbox.blockSignals(True)
+        self.run_all_checkbox.setChecked(all_checked)
+        self.run_all_checkbox.blockSignals(False)
 
     def closeEvent(self, event):
         """Handle window close."""

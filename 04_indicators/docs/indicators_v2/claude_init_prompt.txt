@@ -1,0 +1,28 @@
+Hello - II would liike your help in updating the entire C:\XIIITradingSystems\Epoch_v3\04_indicators path to follow the new C:\XIIITradingSystems\Epoch_v3\05_system_analysis workflow. The purpose of this wiill be to simplify and use the new table structures and backtest logic that exists today in C:\XIIITradingSystems\Epoch_v3\03_backtest. Then I would like a PyQt tool like the system_analysis module that will make it easy to understand the best way to view my indicators for winning trades.
+
+In the table m1_indicator bars there are the indiicator values on a M1 level. The way that I use these indicators in all instances is to look through a 25 minute ramp up view of these indicators. In my C:\XIIITradingSystems\Epoch_v3\02_dow_ai\entry_qualifier we monitor the below indicators during live trading
+
+candle_range_pct - expansion or contraction of the candle
+vol_delta - delta on the candle between buyers and sellers
+vol_roc - Rate of change on the volume
+SMA - direction (9 vs 21) and expansion or contraction between
+M5 structure - Bull vs bear on 5 bar fractal
+M15 structure - Bull vs bear on 5 bar fractal
+H1 structure - Bull vs bear on 5 bar fractal
+
+The difficulty I have found in the my indicator analysis is that we have to be aware of three different phases of the indicators
+
+Ramp up to the entry showing favorable conditions to the trade
+Spot indicators at time of entry on the entry candle
+what happens after the trade has been entered.
+II would like to move step by step through the below items
+
+Develop a ramp up table m1_ramp_up_indicator_2 table that makes it easy to query the ramp up to the trade entry so that we don't need to query and pull all the time - Make it standard 25 bars before ending at the candle before entry (cannot be the entry candle because that is looking into the future on a candle that did not close)
+Develop m1_trade_indicator_2 table that has the information for the m1 candle that closed just before the entry candle (cannot be the entry candle because that is looking into the future on a candle that did not close)
+Develop a M1_post_trade_indicator_2 table that shows the 25 candles (including the entry candle) after the trade is taken
+PyQT tool that goes through each indicator individually that shows how to best use the indicator through standard and easily understandable calculations (we will need to walk through this). We should also build how to use the indicators in conjunction based on the ideal state and setup
+This tool will then provide quality data so that C:\XIIITradingSystems\Epoch_v3\10_machine_learning can work to use Claude to help refine the setup over time.
+
+Please review the scripts, docs, and ask and let me know the best way to set this up and the step by step process to implement. Do not generate any code but please develop an implementation plan in .md and place in C:\XIIITradingSystems\Epoch_v3\04_indicators\docs
+
+I am open to completely deleting and restarting the C:\XIIITradingSystems\Epoch_v3\04_indicators module
