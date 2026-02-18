@@ -1,8 +1,9 @@
 """
-FIFO Trade Processor Window
+Position Trade Processor Window
 Epoch Trading System v2.0 - XIII Trading LLC
 
-PyQt6 GUI for processing DAS Trader CSV files with FIFO trade matching.
+PyQt6 GUI for processing DAS Trader CSV files with position-based trade tracking.
+One trade per symbol per session -- all fills (entries, adds, exits) tracked as events.
 Follows the 03_backtest/backtest_gui/main_window.py pattern.
 """
 
@@ -24,8 +25,10 @@ from styles import DARK_STYLESHEET, COLORS
 # Add parent to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from core.fifo_processor import process_session_fifo, parse_csv_auto, group_fills
-from core.fifo_models import FIFOTrade, FIFODailyLog
+from core.fifo_processor import parse_csv_auto
+from core.trade_processor import extract_date_from_filename, group_fills, determine_direction
+from core.position_processor import process_symbol_position
+from core.position_models import PositionTrade, PositionDailyLog
 from core.atr_calculator import calculate_atr_stops, compute_pnl_r
 from data.journal_db import JournalDB
 
@@ -59,11 +62,11 @@ def scan_csv_files(base_dir: Path) -> List[str]:
 
 class FIFOProcessorWindow(QMainWindow):
     """
-    FIFO Trade Processor GUI.
+    Position Trade Processor GUI.
 
     Features:
     - CSV file selector (dropdown + browse)
-    - PROCESS button (runs FIFO logic, logs to terminal)
+    - PROCESS button (runs position logic, logs to terminal)
     - SAVE TO DB button (writes to journal_trades)
     - CLEAR ENTRIES button (deletes by date)
     - Terminal output with color-coded logging
@@ -73,14 +76,14 @@ class FIFOProcessorWindow(QMainWindow):
     def __init__(self):
         super().__init__()
 
-        self._daily_log: Optional[FIFODailyLog] = None
+        self._daily_log: Optional[PositionDailyLog] = None
         self._is_processing = False
 
         self._setup_ui()
 
     def _setup_ui(self):
         """Set up the main window UI."""
-        self.setWindowTitle("EPOCH FIFO TRADE PROCESSOR v1.0")
+        self.setWindowTitle("EPOCH POSITION TRADE PROCESSOR v2.0")
         self.setMinimumSize(1200, 800)
         self.resize(1300, 950)
 
@@ -112,13 +115,13 @@ class FIFOProcessorWindow(QMainWindow):
         """Create the header layout."""
         layout = QHBoxLayout()
 
-        title = QLabel("EPOCH FIFO TRADE PROCESSOR")
+        title = QLabel("EPOCH POSITION TRADE PROCESSOR")
         title.setObjectName("headerLabel")
         font = QFont("Segoe UI", 18)
         font.setBold(True)
         title.setFont(font)
 
-        version = QLabel("v1.0 FIFO Matching")
+        version = QLabel("v2.0 Position Tracking")
         version.setStyleSheet(f"color: {COLORS['text_muted']};")
         font = QFont("Consolas", 12)
         version.setFont(font)
@@ -293,8 +296,8 @@ class FIFOProcessorWindow(QMainWindow):
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self.terminal.setPlainText(
             f"{'='*70}\n"
-            f"  EPOCH FIFO TRADE PROCESSOR v1.0\n"
-            f"  FIFO Matching: Each add = new trade, exits close oldest first\n"
+            f"  EPOCH POSITION TRADE PROCESSOR v2.0\n"
+            f"  Position Tracking: One trade per symbol, all fills tracked\n"
             f"  Epoch Trading System - XIII Trading LLC\n"
             f"{'='*70}\n"
             f"  Session started: {now}\n"
@@ -304,9 +307,9 @@ class FIFOProcessorWindow(QMainWindow):
             f"    1. Parse DAS Trader CSV (auto-detect delimiter)\n"
             f"    2. Group fills by symbol, sort chronologically\n"
             f"    3. First fill determines direction (SHORT/LONG)\n"
-            f"    4. Each same-direction fill creates a NEW trade\n"
-            f"    5. Opposite fills exit oldest trades first (FIFO)\n"
-            f"    6. Exit price = VWAP of all exit portions per trade\n\n"
+            f"    4. Same-direction fills = ENTRY / ADD (scale in)\n"
+            f"    5. Opposite-direction fills = EXIT (partial / full)\n"
+            f"    6. DAS-style triangles for every fill on chart\n\n"
         )
 
     def _append_terminal(self, text: str, color: str = None):
@@ -382,7 +385,7 @@ class FIFOProcessorWindow(QMainWindow):
 
     @pyqtSlot()
     def _on_process_clicked(self):
-        """Handle PROCESS button click -- run FIFO logic."""
+        """Handle PROCESS button click -- run position logic."""
         if self._is_processing:
             return
 
@@ -406,23 +409,17 @@ class FIFOProcessorWindow(QMainWindow):
         self._update_status("Processing...")
 
         try:
-            self._run_fifo_processing(filepath)
+            self._run_position_processing(filepath)
         finally:
             self._is_processing = False
             self.process_button.setEnabled(True)
             self.file_combo.setEnabled(True)
             self.browse_button.setEnabled(True)
 
-    def _run_fifo_processing(self, filepath: Path):
-        """Execute FIFO processing and log results to terminal."""
-        from core.fifo_processor import (
-            parse_csv_auto, extract_date_from_filename,
-            group_fills, process_symbol_fifo, determine_direction,
-        )
-        from core.fifo_models import FIFODailyLog
-
+    def _run_position_processing(self, filepath: Path):
+        """Execute position-based processing and log results to terminal."""
         self._append_terminal(f"\n{'='*70}")
-        self._append_terminal(f"  FIFO PROCESSING")
+        self._append_terminal(f"  POSITION PROCESSING")
         self._append_terminal(f"{'='*70}\n")
 
         # Step 1: Parse
@@ -483,40 +480,45 @@ class FIFOProcessorWindow(QMainWindow):
 
                 line = f"  Fill #{fill_num}: {side_str} {qty_str} @ {price_str} ({time_str})"
 
-                if "NEW Trade" in action:
+                if "ENTRY" in action:
                     self._append_terminal(
                         f"{line} -> {action}",
                         COLORS['status_complete']
                     )
-                elif "EXIT:" in action:
+                elif "ADD" in action:
+                    self._append_terminal(
+                        f"{line} -> {action}",
+                        COLORS['status_complete']
+                    )
+                elif "EXIT" in action:
                     self._append_terminal(f"{line} -> {action}", COLORS['status_running'])
                 else:
                     self._append_terminal(f"{line} -> {action}")
 
-            trades, warnings = process_symbol_fifo(
+            trade, warnings = process_symbol_position(
                 symbol, symbol_fills, trade_date, callback=fill_callback
             )
-            all_trades.extend(trades)
+            if trade is not None:
+                all_trades.append(trade)
             all_warnings.extend(warnings)
 
             # Per-symbol summary
-            closed = sum(1 for t in trades if t.is_closed)
-            open_count = len(trades) - closed
-            self._append_terminal(
-                f"\n  {symbol} Results: {len(trades)} trades "
-                f"({closed} closed, {open_count} open)"
-            )
+            if trade is not None:
+                status = "CLOSED" if trade.is_closed else "OPEN"
+                self._append_terminal(
+                    f"\n  {symbol}: {len(trade.fills)} fills, "
+                    f"max size {trade.max_position_size}, {status}"
+                )
 
-            # Results table
-            if trades:
-                self._print_trade_table(trades)
+                # Results table
+                self._print_position_table([trade])
 
             # Update progress
             progress = int(((idx + 1) / len(symbols)) * 100)
             self.progress_bar.setValue(progress)
 
         # Build daily log
-        self._daily_log = FIFODailyLog(
+        self._daily_log = PositionDailyLog(
             trade_date=trade_date,
             source_file=filepath.name,
             trades=all_trades,
@@ -525,18 +527,16 @@ class FIFOProcessorWindow(QMainWindow):
 
         # Print summary
         self._append_terminal(f"\n{'='*70}")
-        self._append_terminal("FIFO PROCESSING COMPLETE", COLORS['status_complete'])
+        self._append_terminal("POSITION PROCESSING COMPLETE", COLORS['status_complete'])
         self._append_terminal(f"{'='*70}")
         self._append_terminal(f"  Date:          {trade_date}")
         self._append_terminal(
-            f"  Total Trades:  {self._daily_log.trade_count} "
+            f"  Positions:     {self._daily_log.trade_count} "
             f"({self._daily_log.closed_count} closed, {self._daily_log.open_count} open)"
         )
 
         # Symbol breakdown
-        from collections import Counter
-        symbol_counts = Counter(t.symbol for t in all_trades)
-        sym_str = ", ".join(f"{s} ({c})" for s, c in sorted(symbol_counts.items()))
+        sym_str = ", ".join(self._daily_log.symbols_traded)
         self._append_terminal(f"  Symbols:       {sym_str}")
 
         self._append_terminal(f"  Total P&L:     ${self._daily_log.total_pnl:,.2f}")
@@ -558,36 +558,31 @@ class FIFOProcessorWindow(QMainWindow):
         self.save_button.setEnabled(True)
         self.terminal_status.setText("Complete")
         self.terminal_status.setStyleSheet(f"color: {COLORS['status_complete']};")
-        self._update_status(f"Processed {self._daily_log.trade_count} trades")
+        self._update_status(f"Processed {self._daily_log.trade_count} positions")
 
-    def _print_trade_table(self, trades: List[FIFOTrade]):
-        """Print an ASCII table of trades to the terminal."""
+    def _print_position_table(self, trades: List[PositionTrade]):
+        """Print an ASCII table of position trades to the terminal."""
         # Header
         self._append_terminal(
-            "  +-----+----------+------+----------+----------+----------+---------+"
+            "  +--------+----------+------+------+----------+----------+---------+"
         )
         self._append_terminal(
-            "  | Seq | Entry    | Qty  | Exit     | PnL/shr  | PnL Tot  | Outcome |"
+            "  | Symbol | Entry    | Size | Flls | Exit     | PnL Tot  | Outcome |"
         )
         self._append_terminal(
-            "  +-----+----------+------+----------+----------+----------+---------+"
+            "  +--------+----------+------+------+----------+----------+---------+"
         )
 
         for t in trades:
-            seq = str(t.trade_seq).center(3)
-            entry = f"${t.entry_price:.2f}".rjust(8)
-            qty = str(t.entry_qty).rjust(4)
+            sym = t.symbol.center(6)
+            entry = f"${t.initial_entry_price:.2f}".rjust(8)
+            size = str(t.max_position_size).rjust(4)
+            fills = str(len(t.fills)).rjust(4)
 
-            if t.exit_price is not None:
-                exit_p = f"${t.exit_price:.2f}".rjust(8)
+            if t.avg_exit_price is not None:
+                exit_p = f"${t.avg_exit_price:.2f}".rjust(8)
             else:
                 exit_p = "   OPEN ".rjust(8)
-
-            if t.pnl_dollars is not None:
-                sign = "+" if t.pnl_dollars >= 0 else ""
-                pnl_s = f"{sign}${t.pnl_dollars:.2f}".rjust(8)
-            else:
-                pnl_s = "     -- ".rjust(8)
 
             if t.pnl_total is not None:
                 sign = "+" if t.pnl_total >= 0 else ""
@@ -597,8 +592,7 @@ class FIFOProcessorWindow(QMainWindow):
 
             outcome = t.outcome.value.center(7)
 
-            # Color based on outcome
-            line = f"  | {seq} | {entry} | {qty} | {exit_p} | {pnl_s} | {pnl_t} | {outcome} |"
+            line = f"  | {sym} | {entry} | {size} | {fills} | {exit_p} | {pnl_t} | {outcome} |"
 
             if t.outcome.value == "WIN":
                 self._append_terminal(line, COLORS['status_complete'])
@@ -608,7 +602,7 @@ class FIFOProcessorWindow(QMainWindow):
                 self._append_terminal(line)
 
         self._append_terminal(
-            "  +-----+----------+------+----------+----------+----------+---------+"
+            "  +--------+----------+------+------+----------+----------+---------+"
         )
 
     @pyqtSlot()
@@ -624,7 +618,7 @@ class FIFOProcessorWindow(QMainWindow):
         reply = QMessageBox.question(
             self,
             "Save to Database",
-            f"Save {self._daily_log.trade_count} FIFO trades for "
+            f"Save {self._daily_log.trade_count} position trades for "
             f"{self._daily_log.trade_date} to journal_trades?\n\n"
             f"This will fetch bars from Polygon and compute M1/M5 ATR stops.\n"
             f"Existing trades with matching IDs will be updated (upsert).",
@@ -657,7 +651,6 @@ class FIFOProcessorWindow(QMainWindow):
                     f"[BARS] Fetching M1 + M5 bars for {symbol} ({i+1}/{len(symbols)})...",
                     COLORS['status_running']
                 )
-                QMessageBox  # Force Qt event processing
                 from PyQt6.QtWidgets import QApplication
                 QApplication.processEvents()
 
@@ -671,8 +664,8 @@ class FIFOProcessorWindow(QMainWindow):
 
             self._append_terminal("")
 
-            # ---- Step 2: Compute ATR stops per trade ----
-            self._append_terminal("[ATR] Computing M1 + M5 ATR stops for each trade...")
+            # ---- Step 2: Compute ATR stops per position ----
+            self._append_terminal("[ATR] Computing M1 + M5 ATR stops for each position...")
             self._update_status("Computing ATR stops...")
 
             atr_results = {}  # {trade_id: atr_dict}
@@ -684,32 +677,33 @@ class FIFOProcessorWindow(QMainWindow):
                     self._append_terminal(msg)
 
                 self._append_terminal(
-                    f"\n[ATR] Trade #{trade.trade_seq} {trade.symbol} "
-                    f"{trade.direction.value} {trade.entry_qty} @ ${trade.entry_price:.2f}:",
+                    f"\n[ATR] {trade.symbol} {trade.direction.value} "
+                    f"max {trade.max_position_size} @ ${trade.initial_entry_price:.2f}:",
                     COLORS['status_running']
                 )
 
+                # Use initial entry price for stop/R calculation
                 atr_data = calculate_atr_stops(
                     ticker=trade.symbol,
                     trade_date=trade_date,
                     direction=trade.direction.value,
-                    entry_price=trade.entry_price,
-                    entry_time=trade.entry_time,
-                    exit_time=trade.exit_time,
+                    entry_price=trade.initial_entry_price,
+                    entry_time=trade.initial_entry_time,
+                    exit_time=trade.last_exit_time,
                     bars_m1=bars_m1,
                     bars_m5=bars_m5,
                     callback=atr_callback,
                 )
 
                 # Compute PnL in R terms from actual exit
-                if trade.exit_price is not None:
+                if trade.avg_exit_price is not None:
                     for prefix in ('m1', 'm5'):
                         sd = atr_data.get(f'{prefix}_stop_distance')
                         if sd and sd > 0:
                             atr_data[f'{prefix}_pnl_r'] = compute_pnl_r(
                                 trade.direction.value,
-                                trade.entry_price,
-                                trade.exit_price,
+                                trade.initial_entry_price,
+                                trade.avg_exit_price,
                                 sd,
                             )
 
@@ -732,7 +726,7 @@ class FIFOProcessorWindow(QMainWindow):
                     atr_data = atr_results.get(trade.trade_id, {})
                     row.update(atr_data)
 
-                    success, err_msg = self._save_fifo_trade(db, row)
+                    success, err_msg = self._save_position_trade(db, row)
                     if success:
                         saved += 1
                         m5_max_r = atr_data.get('m5_max_r', 0)
@@ -740,7 +734,7 @@ class FIFOProcessorWindow(QMainWindow):
                         self._append_terminal(
                             f"[DB] Saved {trade.trade_id} "
                             f"({trade.symbol} {trade.direction.value} "
-                            f"{trade.entry_qty} @ ${trade.entry_price:.2f}) "
+                            f"max {trade.max_position_size} @ ${trade.initial_entry_price:.2f}) "
                             f"M1:R{m1_max_r} M5:R{m5_max_r}",
                             COLORS['status_complete']
                         )
@@ -758,11 +752,11 @@ class FIFOProcessorWindow(QMainWindow):
                     QApplication.processEvents()
 
                 self._append_terminal(
-                    f"\n[DB] All {saved}/{total} trades saved successfully.",
+                    f"\n[DB] All {saved}/{total} positions saved successfully.",
                     COLORS['status_complete']
                 )
 
-            self._update_status(f"Saved {saved} trades with ATR stops")
+            self._update_status(f"Saved {saved} positions with ATR stops")
 
         except Exception as e:
             self._append_terminal(f"\n[DB] Error: {e}", COLORS['status_error'])
@@ -771,10 +765,10 @@ class FIFOProcessorWindow(QMainWindow):
             self.save_button.setEnabled(True)
             self.process_button.setEnabled(True)
 
-    def _save_fifo_trade(self, db: JournalDB, row: dict) -> tuple:
+    def _save_position_trade(self, db: JournalDB, row: dict) -> tuple:
         """
-        Save a single FIFO trade dict to journal_trades.
-        Extended version with FIFO columns + M1/M5 ATR stop columns.
+        Save a single position trade dict to journal_trades.
+        Includes fills_json + exit_portions_json + M1/M5 ATR stop columns.
 
         Returns:
             (True, None) on success, (False, error_message) on failure.
@@ -789,6 +783,7 @@ class FIFOProcessorWindow(QMainWindow):
                 pnl_dollars, pnl_total, pnl_r, outcome, duration_seconds,
                 zone_id, model, stop_price, notes,
                 source_file, is_closed, trade_seq, processing_mode,
+                exit_portions_json, fills_json,
                 m1_atr_value, m1_stop_price, m1_stop_distance,
                 m1_r1_price, m1_r2_price, m1_r3_price, m1_r4_price, m1_r5_price,
                 m1_r1_hit, m1_r2_hit, m1_r3_hit, m1_r4_hit, m1_r5_hit,
@@ -807,6 +802,7 @@ class FIFOProcessorWindow(QMainWindow):
                 %(pnl_dollars)s, %(pnl_total)s, %(pnl_r)s, %(outcome)s, %(duration_seconds)s,
                 %(zone_id)s, %(model)s, %(stop_price)s, %(notes)s,
                 %(source_file)s, %(is_closed)s, %(trade_seq)s, %(processing_mode)s,
+                %(exit_portions_json)s, %(fills_json)s,
                 %(m1_atr_value)s, %(m1_stop_price)s, %(m1_stop_distance)s,
                 %(m1_r1_price)s, %(m1_r2_price)s, %(m1_r3_price)s, %(m1_r4_price)s, %(m1_r5_price)s,
                 %(m1_r1_hit)s, %(m1_r2_hit)s, %(m1_r3_hit)s, %(m1_r4_hit)s, %(m1_r5_hit)s,
@@ -841,6 +837,8 @@ class FIFOProcessorWindow(QMainWindow):
                 is_closed = EXCLUDED.is_closed,
                 trade_seq = EXCLUDED.trade_seq,
                 processing_mode = EXCLUDED.processing_mode,
+                exit_portions_json = EXCLUDED.exit_portions_json,
+                fills_json = EXCLUDED.fills_json,
                 m1_atr_value = EXCLUDED.m1_atr_value,
                 m1_stop_price = EXCLUDED.m1_stop_price,
                 m1_stop_distance = EXCLUDED.m1_stop_distance,
@@ -896,7 +894,7 @@ class FIFOProcessorWindow(QMainWindow):
         except Exception as e:
             error_msg = str(e)
             import logging
-            logging.getLogger(__name__).error(f"Error saving FIFO trade {row.get('trade_id')}: {e}")
+            logging.getLogger(__name__).error(f"Error saving position trade {row.get('trade_id')}: {e}")
             try:
                 db.conn.rollback()
             except Exception:
@@ -906,19 +904,45 @@ class FIFOProcessorWindow(QMainWindow):
     @pyqtSlot()
     def _on_clear_db_clicked(self):
         """Handle Clear Entries button click."""
-        if not self._daily_log:
+        # Get trade_date from daily_log if processed, otherwise from selected CSV
+        trade_date = None
+        if self._daily_log:
+            trade_date = self._daily_log.trade_date
+        else:
+            # Try to extract date from selected CSV filename
+            filepath = self._get_selected_filepath()
+            if filepath and filepath.exists():
+                try:
+                    trade_date = extract_date_from_filename(filepath)
+                except ValueError:
+                    pass
+
+        if not trade_date:
             QMessageBox.warning(
-                self, "No Data",
-                "Process a CSV file first to determine the date to clear."
+                self, "No Date",
+                "Select a CSV file to determine the date to clear."
             )
             return
 
-        trade_date = self._daily_log.trade_date
+        # Show how many entries exist before confirming
+        try:
+            with JournalDB() as db:
+                existing = db.get_trades_by_date(trade_date)
+                existing_count = len(existing)
+        except Exception:
+            existing_count = -1  # unknown
+
+        count_msg = (
+            f"Found {existing_count} existing entries."
+            if existing_count >= 0
+            else "Could not check existing entries."
+        )
 
         reply = QMessageBox.question(
             self,
             "Clear Entries",
-            f"This will delete ALL journal_trades entries for {trade_date}.\n\n"
+            f"This will delete ALL journal_trades entries for {trade_date}.\n"
+            f"{count_msg}\n\n"
             f"Are you sure?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No

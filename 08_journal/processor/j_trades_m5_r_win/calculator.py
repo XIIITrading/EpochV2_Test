@@ -31,7 +31,7 @@ from decimal import Decimal
 from typing import List, Dict, Tuple, Optional
 
 import psycopg2
-from psycopg2.extras import execute_values, RealDictCursor
+from psycopg2.extras import execute_values, RealDictCursor, Json
 
 # Self-contained imports from shared db_config
 _PROC_DIR = Path(__file__).resolve().parent.parent
@@ -131,7 +131,7 @@ class JTradesM5RWinCalculator:
             SELECT t.trade_id, t.{JOURNAL_DATE_COL} AS trade_date,
                    t.{JOURNAL_SYMBOL_COL} AS ticker, t.direction, t.model, t.account,
                    t.entry_price, t.entry_time, t.entry_qty,
-                   t.exit_price, t.exit_time, t.exit_qty, t.exit_portions_json,
+                   t.exit_price, t.exit_time, t.exit_qty, t.exit_portions_json, t.fills_json,
                    t.pnl_dollars, t.pnl_total,
                    a.m5_atr_value, a.stop_price, a.stop_distance, a.stop_distance_pct,
                    a.r1_price, a.r2_price, a.r3_price, a.r4_price, a.r5_price,
@@ -278,6 +278,7 @@ class JTradesM5RWinCalculator:
         exit_time = trade_row.get('exit_time')
         exit_qty = _safe_int(trade_row.get('exit_qty'))
         exit_portions_json = trade_row.get('exit_portions_json')
+        fills_json = trade_row.get('fills_json')
 
         # Actual P&L from journal_trades
         pnl_dollars = _safe_float(trade_row.get('pnl_dollars'))
@@ -394,6 +395,7 @@ class JTradesM5RWinCalculator:
             'exit_time': exit_time,
             'exit_qty': exit_qty,
             'exit_portions_json': exit_portions_json,
+            'fills_json': fills_json,
             'pnl_dollars': pnl_dollars,
             'pnl_total': pnl_total,
             'm5_atr_value': m5_atr_value,
@@ -454,7 +456,7 @@ class JTradesM5RWinCalculator:
             'trade_id', 'trade_date', 'ticker', 'direction', 'model',
             'zone_type', 'account', 'zone_high', 'zone_low',
             'entry_price', 'entry_time', 'entry_qty', 'trade_seq',
-            'exit_price', 'exit_time', 'exit_qty', 'exit_portions_json',
+            'exit_price', 'exit_time', 'exit_qty', 'exit_portions_json', 'fills_json',
             'pnl_dollars', 'pnl_total',
             'm5_atr_value', 'stop_price', 'stop_distance', 'stop_distance_pct',
             'r1_price', 'r2_price', 'r3_price', 'r4_price', 'r5_price',
@@ -487,9 +489,16 @@ class JTradesM5RWinCalculator:
         """
 
         # Convert dicts to tuples in column order
+        # Wrap dict/list values with Json() for JSONB columns (e.g. exit_portions_json)
         values = []
         for row in rows:
-            values.append(tuple(row[c] for c in columns))
+            vals = []
+            for c in columns:
+                v = row[c]
+                if isinstance(v, (dict, list)):
+                    v = Json(v)
+                vals.append(v)
+            values.append(tuple(vals))
 
         with conn.cursor() as cur:
             execute_values(cur, query, values, page_size=BATCH_INSERT_SIZE)

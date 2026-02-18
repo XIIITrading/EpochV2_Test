@@ -119,8 +119,11 @@ class JournalHighlight:
     # Journal-specific
     entry_qty: int = 0
 
-    # Journal-specific: exit portions for multiple exit triangles
+    # Journal-specific: exit portions for multiple exit triangles (legacy FIFO)
     exit_portions: list = field(default_factory=list)
+
+    # Position-based: all fills (entry + add + exit) for DAS-style chart rendering
+    fills: list = field(default_factory=list)
 
     @property
     def rating(self) -> int:
@@ -244,8 +247,16 @@ def build_journal_highlight(
         exit_reason="JOURNAL",
     )
 
-    # Parse exit_portions_json if available
+    # Parse fills_json if available (position-based: all fills for chart rendering)
     import json
+    fills_json = row.get('fills_json')
+    if fills_json:
+        if isinstance(fills_json, str):
+            hl.fills = json.loads(fills_json)
+        elif isinstance(fills_json, list):
+            hl.fills = fills_json
+
+    # Parse exit_portions_json if available (legacy FIFO / backward compat)
     exit_json = row.get('exit_portions_json')
     if exit_json:
         if isinstance(exit_json, str):

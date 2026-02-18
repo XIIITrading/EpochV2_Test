@@ -1,16 +1,17 @@
 """
 ================================================================================
-EPOCH TRADING SYSTEM - MODULE 08: FIFO TRADE PROCESSOR v1.0
+EPOCH TRADING SYSTEM - MODULE 08: POSITION TRADE PROCESSOR v2.0
 Application Entry Point
 XIII Trading LLC
 ================================================================================
 
-Launches the PyQt6 FIFO Trade Processor GUI.
+Launches the PyQt6 Position Trade Processor GUI.
 
-FIFO Logic:
-- Each entry-side fill creates a NEW trade
-- Exits close oldest open trades first (FIFO)
-- Exit price per trade = VWAP of all exit portions
+Position Logic:
+- One trade per symbol per session (all fills tracked as events)
+- Every fill classified as ENTRY, ADD, or EXIT
+- DAS Trader-style triangles for every fill on chart
+- Stop/R-levels based on initial entry price
 
 Usage:
     python fifo_app.py                         # Launch GUI

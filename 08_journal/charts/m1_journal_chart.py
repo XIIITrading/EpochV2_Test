@@ -3,10 +3,16 @@ Epoch Trading System - M1 Journal Action Chart Builder
 1-minute candlestick: 30 bars before entry, full trade, 30 bars after last exit.
 
 Journal-specific differences from trade_reel M1 chart:
-  1. Window slicing: entry - 30 bars to last_exit + 30 bars (not max_r + 30)
-  2. Multiple exit triangles: one per exit_portion (partial exits)
+  1. Window slicing: first_fill - 30 bars to last_fill + 30 bars
+  2. DAS-style fill triangles: every fill (entry, add, exit) gets a marker
   3. R-level lines always drawn: all dotted/1px/30% opacity
   4. R diamonds only on hit levels (same as trade_reel)
+
+Position-based rendering (fills_json):
+  - ENTRY: large triangle (size=12), direction-colored
+  - ADD: medium triangle (size=10), direction-colored
+  - EXIT: medium triangle (size=10), opposite direction/color
+  Falls back to legacy entry marker + exit_portions if no fills data.
 """
 
 import plotly.graph_objects as go
@@ -110,28 +116,9 @@ def build_m1_journal_chart(
     _add_zone_poc_lines(fig, zones)
     _add_poc_lines(fig, pocs)
 
-    # Entry marker -- direction-colored arrow
-    #   LONG / B  => green triangle-up
-    #   SHORT / S / SS => red triangle-down
-    if highlight.entry_time and highlight.entry_price:
-        entry_dt = _TZ.localize(datetime.combine(highlight.date, highlight.entry_time))
-        is_long = highlight.direction in ('LONG', 'B')
-        entry_symbol = 'triangle-up' if is_long else 'triangle-down'
-        entry_color = CHART_COLORS['bull'] if is_long else CHART_COLORS['bear']
-
-        fig.add_trace(go.Scatter(
-            x=[entry_dt],
-            y=[highlight.entry_price],
-            mode='markers',
-            marker=dict(symbol=entry_symbol, size=12, color=entry_color,
-                        line=dict(color='white', width=1)),
-            showlegend=False,
-            hoverinfo='text',
-            hovertext=f"Entry ${highlight.entry_price:.2f}",
-        ))
-
-    # Exit markers -- multiple triangles from exit_portions
-    _add_exit_markers(fig, highlight)
+    # Fill markers -- DAS-style triangles for every fill (entry, add, exit)
+    # Falls back to legacy entry + exit_portions if no fills data
+    _add_fill_markers(fig, highlight)
 
     # R-level lines -- ALL R1-R5 drawn (hit=solid, unhit=dotted)
     _add_r_level_lines(fig, highlight)
@@ -204,8 +191,8 @@ def _slice_to_window(
     entry_dt = _TZ.localize(datetime.combine(highlight.date, highlight.entry_time))
     start_dt = entry_dt - timedelta(minutes=BARS_BEFORE_ENTRY)
 
-    # Determine last exit time from exit_portions or highlight.exit_time
-    last_exit_time = _get_last_exit_time(highlight)
+    # Determine last fill time from fills, exit_portions, or highlight.exit_time
+    last_exit_time = _get_last_fill_time(highlight)
 
     if last_exit_time:
         last_exit_dt = _TZ.localize(datetime.combine(highlight.date, last_exit_time))
@@ -225,12 +212,30 @@ def _slice_to_window(
     return sliced
 
 
-def _get_last_exit_time(highlight) -> Optional[time]:
+def _get_last_fill_time(highlight) -> Optional[time]:
     """
-    Determine the last exit time from exit_portions or highlight.exit_time.
-    Returns None if neither is available.
+    Determine the last fill time from fills, exit_portions, or highlight.exit_time.
+    Returns None if none are available.
     """
-    # Try exit_portions first (list of objects/dicts with .time or ['time'])
+    # Try fills first (position-based: last fill of any type)
+    fills = getattr(highlight, 'fills', None)
+    if fills:
+        times = []
+        for f in fills:
+            t = getattr(f, 'time', None)
+            if t is None and isinstance(f, dict):
+                t = f.get('time')
+                if isinstance(t, str):
+                    try:
+                        t = datetime.strptime(t, '%H:%M:%S').time()
+                    except (ValueError, TypeError):
+                        t = None
+            if t is not None:
+                times.append(t)
+        if times:
+            return max(times)
+
+    # Try exit_portions (FIFO legacy)
     exit_portions = getattr(highlight, 'exit_portions', None)
     if exit_portions:
         times = []
@@ -238,7 +243,6 @@ def _get_last_exit_time(highlight) -> Optional[time]:
             t = getattr(p, 'time', None)
             if t is None and isinstance(p, dict):
                 t = p.get('time')
-                # Parse string times from JSON
                 if isinstance(t, str):
                     try:
                         t = datetime.strptime(t, '%H:%M:%S').time()
@@ -258,7 +262,128 @@ def _get_last_exit_time(highlight) -> Optional[time]:
 
 
 # =============================================================================
-# Exit Markers (Multiple Triangles)
+# Fill Markers (Position-Based: DAS-Style Triangles for Every Fill)
+# =============================================================================
+
+def _add_fill_markers(fig: go.Figure, highlight):
+    """
+    Draw DAS Trader-style triangles for every fill in the position.
+
+    Uses highlight.fills (from fills_json) when available.
+    Falls back to legacy entry marker + exit_portions if no fills data.
+
+    Marker styling:
+      ENTRY: large triangle (size=12), direction-colored, white border
+      ADD:   medium triangle (size=10), direction-colored, white border
+      EXIT:  medium triangle (size=10), opposite direction/color, white border
+    """
+    fills = getattr(highlight, 'fills', None) or []
+
+    if fills:
+        _add_position_fill_markers(fig, highlight, fills)
+    else:
+        # Legacy fallback: single entry marker + exit_portions
+        _add_legacy_entry_marker(fig, highlight)
+        _add_exit_markers(fig, highlight)
+
+
+def _add_position_fill_markers(fig: go.Figure, highlight, fills: list):
+    """
+    Draw a triangle for each fill in fills_json.
+
+    fills is a list of dicts: {"side","type","price","qty","time","position_after"}
+    """
+    is_long = highlight.direction in ('LONG', 'B')
+
+    # Direction-colored markers for entries/adds
+    entry_marker_symbol = 'triangle-up' if is_long else 'triangle-down'
+    entry_color = CHART_COLORS['bull'] if is_long else CHART_COLORS['bear']
+
+    # Opposite markers for exits
+    exit_marker_symbol = 'triangle-down' if is_long else 'triangle-up'
+    exit_color = CHART_COLORS['bear'] if is_long else CHART_COLORS['bull']
+
+    for f in fills:
+        # Extract fields (support both dict and object)
+        f_type = f.get('type') if isinstance(f, dict) else getattr(f, 'fill_type', None)
+        f_price = f.get('price') if isinstance(f, dict) else getattr(f, 'price', None)
+        f_time = f.get('time') if isinstance(f, dict) else getattr(f, 'time', None)
+        f_qty = f.get('qty') if isinstance(f, dict) else getattr(f, 'qty', None)
+        f_pos = f.get('position_after') if isinstance(f, dict) else getattr(f, 'position_after', None)
+
+        if f_price is None or f_time is None:
+            continue
+
+        # Parse string time if needed
+        if isinstance(f_time, str):
+            try:
+                f_time = datetime.strptime(f_time, '%H:%M:%S').time()
+            except (ValueError, TypeError):
+                continue
+
+        # Handle FillType enum values
+        if hasattr(f_type, 'value'):
+            f_type = f_type.value
+
+        fill_dt = _TZ.localize(datetime.combine(highlight.date, f_time))
+
+        if f_type in ('ENTRY', 'ADD'):
+            marker_sym = entry_marker_symbol
+            color = entry_color
+            size = 6 if f_type == 'ENTRY' else 5
+            label = "Entry" if f_type == 'ENTRY' else "Add"
+        elif f_type == 'EXIT':
+            marker_sym = exit_marker_symbol
+            color = exit_color
+            size = 5
+            label = "Exit"
+        else:
+            continue
+
+        hover = f"{label} ${f_price:.2f}"
+        if f_qty:
+            hover += f" x{f_qty}"
+        if f_pos is not None:
+            hover += f" (pos: {f_pos})"
+
+        fig.add_trace(go.Scatter(
+            x=[fill_dt],
+            y=[f_price],
+            mode='markers',
+            marker=dict(
+                symbol=marker_sym,
+                size=size,
+                color=color,
+                line=dict(color='white', width=1),
+            ),
+            showlegend=False,
+            hoverinfo='text',
+            hovertext=hover,
+        ))
+
+
+def _add_legacy_entry_marker(fig: go.Figure, highlight):
+    """Legacy single entry marker (used when fills_json is not available)."""
+    if highlight.entry_time and highlight.entry_price:
+        entry_dt = _TZ.localize(datetime.combine(highlight.date, highlight.entry_time))
+        is_long = highlight.direction in ('LONG', 'B')
+        entry_symbol = 'triangle-up' if is_long else 'triangle-down'
+        entry_color = CHART_COLORS['bull'] if is_long else CHART_COLORS['bear']
+
+        fig.add_trace(go.Scatter(
+            x=[entry_dt],
+            y=[highlight.entry_price],
+            mode='markers',
+            marker=dict(symbol=entry_symbol, size=6, color=entry_color,
+                        line=dict(color='white', width=1)),
+            showlegend=False,
+            hoverinfo='text',
+            hovertext=f"Entry ${highlight.entry_price:.2f}",
+        ))
+
+
+# =============================================================================
+# Exit Markers (Legacy: Multiple Triangles from exit_portions)
 # =============================================================================
 
 def _add_exit_markers(fig: go.Figure, highlight):
