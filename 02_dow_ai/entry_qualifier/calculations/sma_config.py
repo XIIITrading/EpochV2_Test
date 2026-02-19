@@ -1,12 +1,23 @@
 """
-SMA Configuration Calculations
-Epoch Trading System v1 - XIII Trading LLC
+SMA Configuration Calculations - Thin Adapter
+Epoch Trading System - XIII Trading LLC
 
-Calculates SMA9, SMA21, configuration (BULLISH/BEARISH),
-spread percentage, and price position.
+Delegates to shared.indicators.core.sma (canonical implementation).
+Preserves dict-based return format + enum types for backward compatibility.
+
+SWH-6: Single source of truth - shared.indicators
 """
-from typing import List, Optional, Tuple
+from typing import List, Optional
 from enum import Enum
+
+from shared.indicators.core.sma import (
+    calculate_sma as _shared_calc_sma,
+    calculate_sma_spread_pct as _shared_spread_pct,
+    get_sma_config_str as _shared_sma_config,
+    get_price_position as _shared_price_position,
+    is_wide_spread as _shared_is_wide,
+)
+from shared.indicators.config import CONFIG
 
 
 class SMAConfig(Enum):
@@ -23,112 +34,46 @@ class PricePosition(Enum):
     BELOW_BOTH = "BELOW"
 
 
-# Threshold for wide spread (indicates strong trend)
-WIDE_SPREAD_THRESHOLD = 0.15  # 0.15%
+# Re-export threshold from canonical config
+WIDE_SPREAD_THRESHOLD = CONFIG.sma.wide_spread_threshold  # 0.15
+
+
+# Mapping from shared string labels to local enums
+_CONFIG_MAP = {"BULL": SMAConfig.BULLISH, "BEAR": SMAConfig.BEARISH, "FLAT": SMAConfig.NEUTRAL}
+_POSITION_MAP = {"ABOVE": PricePosition.ABOVE_BOTH, "BELOW": PricePosition.BELOW_BOTH, "BTWN": PricePosition.BETWEEN}
 
 
 def calculate_sma(prices: List[float], period: int) -> Optional[float]:
-    """
-    Calculate Simple Moving Average.
-
-    Args:
-        prices: List of close prices
-        period: SMA period
-
-    Returns:
-        SMA value, or None if insufficient data
-    """
+    """Calculate Simple Moving Average."""
     if len(prices) < period:
         return None
-
     return sum(prices[-period:]) / period
 
 
 def calculate_sma_spread_pct(sma9: float, sma21: float, price: float) -> float:
-    """
-    Calculate spread between SMA9 and SMA21 as percentage of price.
-
-    Args:
-        sma9: SMA9 value
-        sma21: SMA21 value
-        price: Reference price for percentage calculation
-
-    Returns:
-        Spread as percentage (e.g., 0.15 for 0.15%)
-    """
-    if price <= 0:
-        return 0.0
-
-    spread = abs(sma9 - sma21)
-    return (spread / price) * 100
+    """Calculate spread between SMA9 and SMA21 as percentage of price."""
+    return _shared_spread_pct(sma9, sma21, price)
 
 
 def get_sma_config(sma9: float, sma21: float) -> SMAConfig:
-    """
-    Determine SMA configuration.
-
-    Args:
-        sma9: SMA9 value
-        sma21: SMA21 value
-
-    Returns:
-        SMAConfig enum value
-    """
-    if sma9 > sma21:
-        return SMAConfig.BULLISH
-    elif sma9 < sma21:
-        return SMAConfig.BEARISH
-    else:
-        return SMAConfig.NEUTRAL
+    """Determine SMA configuration. Returns SMAConfig enum."""
+    label = _shared_sma_config(sma9, sma21)
+    return _CONFIG_MAP.get(label, SMAConfig.NEUTRAL)
 
 
 def get_price_position(price: float, sma9: float, sma21: float) -> PricePosition:
-    """
-    Determine price position relative to SMAs.
-
-    Args:
-        price: Current price
-        sma9: SMA9 value
-        sma21: SMA21 value
-
-    Returns:
-        PricePosition enum value
-    """
-    higher_sma = max(sma9, sma21)
-    lower_sma = min(sma9, sma21)
-
-    if price > higher_sma:
-        return PricePosition.ABOVE_BOTH
-    elif price < lower_sma:
-        return PricePosition.BELOW_BOTH
-    else:
-        return PricePosition.BETWEEN
+    """Determine price position relative to SMAs. Returns PricePosition enum."""
+    label = _shared_price_position(price, sma9, sma21)
+    return _POSITION_MAP.get(label, PricePosition.BETWEEN)
 
 
 def is_wide_spread(spread_pct: float) -> bool:
-    """
-    Check if SMA spread indicates strong trend.
-
-    Args:
-        spread_pct: Spread as percentage
-
-    Returns:
-        True if spread >= 0.15%
-    """
-    return spread_pct >= WIDE_SPREAD_THRESHOLD
+    """Check if SMA spread indicates strong trend."""
+    return _shared_is_wide(spread_pct)
 
 
 def format_sma_display(config: SMAConfig, spread_pct: float) -> str:
-    """
-    Format SMA config and spread for display.
-
-    Args:
-        config: SMA configuration
-        spread_pct: Spread as percentage
-
-    Returns:
-        Formatted string like "BULL 0.15%"
-    """
+    """Format SMA config and spread for display."""
     return f"{config.value} {spread_pct:.2f}%"
 
 
@@ -155,7 +100,6 @@ def calculate_all_sma_configs(
         close = bar.get('close', bar.get('c', 0))
         closes.append(close)
 
-        # Need at least sma_long bars to calculate
         if i < sma_long - 1:
             results.append({
                 'sma9': None,
@@ -166,7 +110,6 @@ def calculate_all_sma_configs(
                 'sma_display': None
             })
         else:
-            # Calculate SMAs
             sma9 = calculate_sma(closes, sma_short)
             sma21 = calculate_sma(closes, sma_long)
 

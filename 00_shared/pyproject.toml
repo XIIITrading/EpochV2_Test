@@ -30,9 +30,24 @@ dev = [
     "ruff>=0.1.0",
 ]
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["shared*"]
+[tool.setuptools]
+packages = [
+    "shared",
+    "shared.config",
+    "shared.data",
+    "shared.data.polygon",
+    "shared.data.supabase",
+    "shared.indicators",
+    "shared.indicators.core",
+    "shared.indicators.structure",
+    "shared.indicators.health",
+    "shared.models",
+    "shared.ui",
+    "shared.ui.widgets",
+    "shared.ui.charts",
+    "shared.utils",
+    "shared.charts",
+]
 
 [tool.setuptools.package-dir]
 shared = "."

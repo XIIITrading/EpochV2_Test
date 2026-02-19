@@ -1,79 +1,46 @@
 """
-Candle Range Calculations
-Epoch Trading System v1 - XIII Trading LLC
+Candle Range Calculations - Thin Adapter
+Epoch Trading System - XIII Trading LLC
 
-Calculates candle range percentage from OHLC bar data.
-Used as primary skip filter for absorption zones.
+Delegates to shared.indicators.core.candle_range (canonical implementation).
+Preserves dict-based return format for backward compatibility with data_worker.
+
+SWH-6: Single source of truth - shared.indicators
 """
-from typing import List, Optional
+from typing import List
+
+from shared.indicators.core.candle_range import (
+    calculate_candle_range_pct as _shared_candle_range_pct,
+    is_absorption_zone as _shared_is_absorption,
+    get_range_classification,
+)
+from shared.indicators.config import CONFIG
 
 
-# Absorption Zone threshold - skip trades below this
-ABSORPTION_THRESHOLD = 0.0012  # 0.12%
-
-# Normal range threshold - trades above this have edge
-NORMAL_THRESHOLD = 0.0015  # 0.15%
-
-# High range threshold - strong signal
-HIGH_THRESHOLD = 0.0020  # 0.20%
+# Re-export thresholds from canonical config (for backward compatibility)
+ABSORPTION_THRESHOLD = CONFIG.candle_range.absorption_threshold / 100  # 0.0012
+NORMAL_THRESHOLD = CONFIG.candle_range.normal_threshold / 100          # 0.0015
+HIGH_THRESHOLD = CONFIG.candle_range.high_threshold / 100              # 0.0020
 
 
-def calculate_candle_range_pct(
-    high: float,
-    low: float,
-    close: float
-) -> float:
+def calculate_candle_range_pct(high: float, low: float, close: float) -> float:
     """
     Calculate candle range as percentage of price.
 
     Formula: (high - low) / close * 100
 
-    Args:
-        high: Bar high price
-        low: Bar low price
-        close: Bar close price (used as reference)
-
-    Returns:
-        Candle range as percentage (e.g., 0.15 for 0.15%)
+    Delegates to shared.indicators.core.candle_range.calculate_candle_range_pct.
     """
-    if close <= 0:
-        return 0.0
-
-    range_value = high - low
-    return (range_value / close) * 100
+    return _shared_candle_range_pct(high, low, close)
 
 
 def is_absorption_zone(candle_range_pct: float) -> bool:
     """
     Check if candle range indicates absorption zone (should skip).
 
-    Args:
-        candle_range_pct: Candle range as percentage
-
-    Returns:
-        True if this is an absorption zone (< 0.12%)
+    Delegates to shared.indicators.core.candle_range.is_absorption_zone.
     """
-    return candle_range_pct < (ABSORPTION_THRESHOLD * 100)
-
-
-def get_range_classification(candle_range_pct: float) -> str:
-    """
-    Classify candle range for display/logging.
-
-    Args:
-        candle_range_pct: Candle range as percentage
-
-    Returns:
-        Classification string: 'ABSORPTION', 'LOW', 'NORMAL', 'HIGH'
-    """
-    if candle_range_pct < (ABSORPTION_THRESHOLD * 100):
-        return 'ABSORPTION'
-    elif candle_range_pct < (NORMAL_THRESHOLD * 100):
-        return 'LOW'
-    elif candle_range_pct < (HIGH_THRESHOLD * 100):
-        return 'NORMAL'
-    else:
-        return 'HIGH'
+    return _shared_is_absorption(candle_range_pct)
 
 
 def calculate_all_candle_ranges(bars: List[dict]) -> List[dict]:
@@ -93,12 +60,11 @@ def calculate_all_candle_ranges(bars: List[dict]) -> List[dict]:
         low = bar.get('low', bar.get('l', 0))
         close = bar.get('close', bar.get('c', 0))
 
-        candle_range_pct = calculate_candle_range_pct(high, low, close)
-        is_absorption = is_absorption_zone(candle_range_pct)
+        pct = calculate_candle_range_pct(high, low, close)
 
         results.append({
-            'candle_range_pct': candle_range_pct,
-            'is_absorption': is_absorption
+            'candle_range_pct': pct,
+            'is_absorption': is_absorption_zone(pct)
         })
 
     return results

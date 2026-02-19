@@ -6,12 +6,17 @@ XIII Trading LLC
 ================================================================================
 
 Calculates all M1 indicator bars and populates j_m1_indicator_bars.
-Reuses indicator and structure calculation logic from the backtest module.
+
+Key imports:
+  - Indicators: shared.indicators (canonical per SWH-6)
+  - M1IndicatorCalculator: 03_backtest (uses shared.indicators internally)
+  - StructureAnalyzer: 03_backtest (HTF API/DB fetcher + fractal BOS/ChoCH)
+  - HTF structure from M1: shared.indicators.structure (canonical fractal)
 
 Key difference from backtest: Reads from j_m1_bars (not m1_bars_2) and
 journal_trades (not trades_2). Writes to j_m1_indicator_bars.
 
-Version: 1.0.0
+Version: 2.0.0 (SWH-6 migration)
 ================================================================================
 """
 
@@ -36,24 +41,36 @@ from db_config import (
     POLYGON_API_KEY, ATR_PERIOD,
 )
 
-# Import the backtest indicator calculator (pure math, reusable)
+# =============================================================================
+# IMPORT FROM SHARED INDICATORS (canonical per SWH-6)
+# =============================================================================
+
+from shared.indicators.config import CONFIG
+from shared.indicators.core.atr import calculate_true_range
+from shared.indicators.structure import calculate_structure_from_bars
+
+# =============================================================================
+# IMPORT FROM BACKTEST (M1IndicatorCalculator + StructureAnalyzer)
+# M1IndicatorCalculator now imports from shared.indicators internally.
+# StructureAnalyzer handles HTF API/DB fetching + BOS/ChoCH detection.
+# =============================================================================
+
 _BACKTEST_DIR = Path(__file__).resolve().parent.parent.parent.parent / "03_backtest" / "processor" / "secondary_analysis" / "m1_indicator_bars_2"
 
 import importlib.util
 
-# Load indicators module from backtest
+# Load indicators module from backtest (now uses shared.indicators)
 _indicators_spec = importlib.util.spec_from_file_location("bt_indicators", _BACKTEST_DIR / "indicators.py")
 _indicators_mod = importlib.util.module_from_spec(_indicators_spec)
 _indicators_spec.loader.exec_module(_indicators_mod)
 M1IndicatorCalculator = _indicators_mod.M1IndicatorCalculator
 
-# Load structure module from backtest
+# Load structure module from backtest (HTF fetcher + BOS/ChoCH analyzer)
 _structure_spec = importlib.util.spec_from_file_location("bt_structure", _BACKTEST_DIR / "structure.py")
 _structure_mod = importlib.util.module_from_spec(_structure_spec)
 _structure_spec.loader.exec_module(_structure_mod)
 StructureAnalyzer = _structure_mod.StructureAnalyzer
 StructureResult = _structure_mod.StructureResult
-MarketStructureCalculator = _structure_mod.MarketStructureCalculator
 STRUCTURE_LABELS = _structure_mod.STRUCTURE_LABELS
 
 
@@ -100,7 +117,7 @@ class M1IndicatorBarResult:
     m5_structure: Optional[str]
     m1_structure: Optional[str]
 
-    # Composite Scores
+    # Composite Scores (DEPRECATED per SWH-6 - always NULL)
     health_score: Optional[int]
     long_score: Optional[int]
     short_score: Optional[int]
@@ -170,20 +187,21 @@ class JM1IndicatorBarsCalculator:
         self._log(f"Read {len(df)} M1 bars from {J_M1_BARS_TABLE}")
 
         # Pre-compute M5 and M15 ATR from M1 bars (avoids Polygon API + timezone issues)
-        m5_atr_map = self._compute_htf_atr_from_m1(df, 5, ATR_PERIOD)
-        m15_atr_map = self._compute_htf_atr_from_m1(df, 15, ATR_PERIOD)
+        atr_period = CONFIG.atr.period
+        m5_atr_map = self._compute_htf_atr_from_m1(df, 5, atr_period)
+        m15_atr_map = self._compute_htf_atr_from_m1(df, 15, atr_period)
         m5_count = sum(1 for v in m5_atr_map.values() if v is not None)
         m15_count = sum(1 for v in m15_atr_map.values() if v is not None)
         self._log(f"Pre-computed HTF ATR from M1 bars: M5={m5_count} non-null, M15={m15_count} non-null")
 
-        # Pre-compute M5 and M15 structure from M1 bars (avoids Polygon API timezone issues)
+        # Pre-compute M5 and M15 structure from M1 bars using shared canonical fractal
         m5_structure_map = self._compute_htf_structure_from_m1(df, 5)
         m15_structure_map = self._compute_htf_structure_from_m1(df, 15)
         self._log(f"Pre-computed HTF structure from M1 bars: "
                   f"M5={sum(1 for v in m5_structure_map.values() if v != 'NEUTRAL')} non-neutral, "
                   f"M15={sum(1 for v in m15_structure_map.values() if v != 'NEUTRAL')} non-neutral")
 
-        # Add all indicators
+        # Add all indicators using shared canonical calculations
         df = self.indicator_calculator.add_all_indicators(df)
 
         self._log(f"Processing {len(df)} bars with indicators")
@@ -192,8 +210,7 @@ class JM1IndicatorBarsCalculator:
         for idx, (df_idx, row) in enumerate(df.iterrows()):
             bar_time = row['bar_time']
 
-            # Get structure at this bar time
-            # M5 and M15 use local computation; H1, H4, M1 still use the fetcher
+            # Get structure at this bar time (H4, H1, M1 via backtest StructureAnalyzer)
             structures = self.structure_analyzer.get_all_structures(
                 ticker=ticker,
                 trade_date=trade_date,
@@ -241,9 +258,9 @@ class JM1IndicatorBarsCalculator:
                 m5_structure=m5_struct_label,
                 m1_structure=structures['M1'].direction_label if structures.get('M1') else None,
 
-                health_score=self._safe_int(row.get('health_score')),
-                long_score=self._safe_int(row.get('long_score')),
-                short_score=self._safe_int(row.get('short_score')),
+                health_score=None,   # DEPRECATED per SWH-6
+                long_score=None,     # DEPRECATED per SWH-6
+                short_score=None,    # DEPRECATED per SWH-6
 
                 atr_m1=self._safe_float(row.get('atr_m1')),
                 atr_m5=self._safe_float(atr_m5),
@@ -263,17 +280,15 @@ class JM1IndicatorBarsCalculator:
         """
         Compute higher-timeframe ATR by aggregating M1 bars into HTF candles.
 
-        Instead of calling the Polygon API for M5/M15 bars (which has UTC/ET
-        timezone issues and requires prior-day data), we aggregate directly
-        from the M1 bars already in j_m1_bars.
+        Uses shared.indicators.core.atr.calculate_true_range for TR calculation.
 
         Args:
             df: M1 bars DataFrame with open, high, low, close columns
             htf_minutes: HTF candle size in minutes (5 for M5, 15 for M15)
-            period: ATR period (default 14)
+            period: ATR period (default from CONFIG)
 
         Returns:
-            Dict mapping M1 bar index → ATR value (or None if insufficient data)
+            Dict mapping M1 bar index -> ATR value (or None if insufficient data)
         """
         atr_map = {}
 
@@ -281,8 +296,6 @@ class JM1IndicatorBarsCalculator:
             return atr_map
 
         # Build HTF candles by grouping M1 bars into htf_minutes buckets
-        # Each M1 bar has bar_time (HH:MM:SS). Convert to minutes since midnight
-        # for grouping.
         m1_highs = df['high'].astype(float).values
         m1_lows = df['low'].astype(float).values
         m1_closes = df['close'].astype(float).values
@@ -295,49 +308,41 @@ class JM1IndicatorBarsCalculator:
             if hasattr(bt, 'hour'):
                 total_min = bt.hour * 60 + bt.minute
             else:
-                # Handle timedelta from PostgreSQL
                 total_seconds = int(bt.total_seconds()) if hasattr(bt, 'total_seconds') else 0
                 total_min = total_seconds // 60
             minutes_list.append(total_min)
 
         # Group M1 bars into HTF candles
-        # Each HTF candle covers [floor(minute/htf)*htf, floor(minute/htf)*htf + htf)
-        htf_candles = []  # List of (htf_open, htf_high, htf_low, htf_close)
-        htf_bar_end_indices = []  # M1 index where each HTF candle ends
+        htf_candles = []
+        htf_bar_end_indices = []
 
         current_bucket = None
-        bucket_high = None
-        bucket_low = None
-        bucket_open = None
-        bucket_close = None
+        bucket_high = bucket_low = bucket_open = bucket_close = None
 
         for i in range(len(df)):
             bucket = minutes_list[i] // htf_minutes
 
             if bucket != current_bucket:
-                # Save previous candle
                 if current_bucket is not None:
                     htf_candles.append((bucket_open, bucket_high, bucket_low, bucket_close))
                     htf_bar_end_indices.append(i - 1)
 
-                # Start new candle
                 current_bucket = bucket
                 bucket_open = m1_opens[i]
                 bucket_high = m1_highs[i]
                 bucket_low = m1_lows[i]
                 bucket_close = m1_closes[i]
             else:
-                # Update running candle
                 bucket_high = max(bucket_high, m1_highs[i])
                 bucket_low = min(bucket_low, m1_lows[i])
                 bucket_close = m1_closes[i]
 
-        # Don't forget the last candle
+        # Last candle
         if current_bucket is not None:
             htf_candles.append((bucket_open, bucket_high, bucket_low, bucket_close))
             htf_bar_end_indices.append(len(df) - 1)
 
-        # Compute true range for each HTF candle
+        # Compute true range for each HTF candle using shared canonical function
         true_ranges = []
         for j in range(len(htf_candles)):
             o, h, l, c = htf_candles[j]
@@ -345,27 +350,20 @@ class JM1IndicatorBarsCalculator:
                 tr = h - l  # No previous close for the first candle
             else:
                 prev_c = htf_candles[j - 1][3]
-                tr = max(h - l, abs(h - prev_c), abs(l - prev_c))
+                tr = calculate_true_range(h, l, prev_c)
             true_ranges.append(tr)
 
         # Build ATR values: for each HTF candle, ATR = SMA of last `period` TRs
         htf_atrs = []
         for j in range(len(true_ranges)):
-            if j + 1 < period:  # Not enough candles yet (need `period` TRs)
+            if j + 1 < period:
                 htf_atrs.append(None)
             else:
                 atr_val = sum(true_ranges[j - period + 1: j + 1]) / period
                 htf_atrs.append(atr_val)
 
         # Map each M1 bar index to the ATR of the most recently COMPLETED HTF candle
-        # For a given M1 bar at index i:
-        # - Find the latest htf_bar_end_index that is <= i
-        # - That gives us the HTF candle index
-        # - Use that candle's ATR (but only if the candle is fully complete)
-        htf_idx = 0
         for i in range(len(df)):
-            # Advance htf_idx to the latest completed HTF candle before this M1 bar
-            # A candle is "completed" if its end index < i (strictly before current bar)
             completed_htf = -1
             for j in range(len(htf_bar_end_indices)):
                 if htf_bar_end_indices[j] < i:
@@ -385,17 +383,16 @@ class JM1IndicatorBarsCalculator:
     ) -> Dict[int, str]:
         """
         Compute higher-timeframe market structure by aggregating M1 bars into
-        HTF candles and running the fractal-based structure detector.
+        HTF candles and running the canonical fractal-based structure detector.
 
-        Same approach as _compute_htf_atr_from_m1: avoids Polygon API calls
-        and the UTC/ET timezone issues in HTFBarFetcher.
+        Uses shared.indicators.structure.calculate_structure_from_bars (SWH-6).
 
         Args:
             df: M1 bars DataFrame with open, high, low, close columns
             htf_minutes: HTF candle size in minutes (5 for M5, 15 for M15)
 
         Returns:
-            Dict mapping M1 bar index → structure label ('BULL', 'BEAR', 'NEUTRAL')
+            Dict mapping M1 bar index -> structure label ('BULL', 'BEAR', 'NEUTRAL')
         """
         structure_map = {}
 
@@ -419,7 +416,7 @@ class JM1IndicatorBarsCalculator:
             minutes_list.append(total_min)
 
         # Build HTF candles by time bucket
-        htf_candles = []  # List of dict with open/high/low/close
+        htf_candles = []
         htf_bar_end_indices = []
 
         current_bucket = None
@@ -454,16 +451,15 @@ class JM1IndicatorBarsCalculator:
             })
             htf_bar_end_indices.append(len(df) - 1)
 
-        # Use the backtest structure calculator
-        calc = MarketStructureCalculator()
+        # Use canonical shared fractal structure detector
+        fractal_length = CONFIG.structure.fractal_length
 
-        # For each M1 bar, compute structure from completed HTF candles up to that point
+        # For each M1 bar, compute structure from completed HTF candles
         # Cache structure results to avoid redundant recalculation
         last_completed = -1
         last_structure_label = 'NEUTRAL'
 
         for i in range(len(df)):
-            # Find latest completed HTF candle before this M1 bar
             completed_htf = -1
             for j in range(len(htf_bar_end_indices)):
                 if htf_bar_end_indices[j] < i:
@@ -479,8 +475,10 @@ class JM1IndicatorBarsCalculator:
             if completed_htf != last_completed:
                 last_completed = completed_htf
                 bars_for_structure = htf_candles[:completed_htf + 1]
-                result = calc.calculate(bars_for_structure)
-                last_structure_label = result.direction_label
+                result = calculate_structure_from_bars(
+                    bars_for_structure, length=fractal_length
+                )
+                last_structure_label = result.label
 
             structure_map[i] = last_structure_label
 
@@ -678,7 +676,7 @@ class JM1IndicatorBarsPopulator:
                 callback(msg)
 
         _emit("=" * 60)
-        _emit("Journal M1 Indicator Bars Populator v1.0")
+        _emit("Journal M1 Indicator Bars Populator v2.0 (SWH-6)")
         _emit("=" * 60)
         _emit(f"Source: {SOURCE_TABLE} + {J_M1_BARS_TABLE}")
         _emit(f"Target: {J_M1_INDICATOR_BARS_TABLE}")

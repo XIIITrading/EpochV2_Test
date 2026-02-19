@@ -1,10 +1,17 @@
 """
-Volume Delta Calculations
-Epoch Trading System v1 - XIII Trading LLC
+Volume Delta Calculations - Thin Adapter
+Epoch Trading System - XIII Trading LLC
 
-Calculates volume delta (buying vs selling pressure) from OHLCV bar data.
+Delegates to shared.indicators.core.volume_delta (canonical implementation).
+Preserves dict-based return format for backward compatibility with data_worker.
+
+SWH-6: Single source of truth - shared.indicators
 """
 from typing import List, Optional
+
+from shared.indicators.core.volume_delta import (
+    calculate_bar_delta as _shared_bar_delta,
+)
 
 
 def calculate_bar_delta(
@@ -17,31 +24,13 @@ def calculate_bar_delta(
     """
     Estimate volume delta for a single bar using bar position method.
 
-    The bar position method estimates buying/selling pressure based on
-    where the close falls within the bar's range:
-    - Close at high = +1 (all buying)
-    - Close at low = -1 (all selling)
-    - Close at midpoint = 0 (neutral)
-
-    Args:
-        open_price: Bar open price
-        high: Bar high price
-        low: Bar low price
-        close: Bar close price
-        volume: Bar volume
+    Delegates to shared.indicators.core.volume_delta.calculate_bar_delta.
 
     Returns:
         Estimated net volume (positive = buying, negative = selling)
     """
-    bar_range = high - low
-
-    if bar_range == 0:
-        return 0.0
-
-    # Calculate position: -1 to +1 based on where close is in range
-    position = (2 * (close - low) / bar_range) - 1
-
-    return position * volume
+    result = _shared_bar_delta(open_price, high, low, close, int(volume))
+    return result.bar_delta
 
 
 def calculate_rolling_delta(
@@ -82,7 +71,6 @@ def calculate_all_deltas(
     raw_deltas = []
 
     for bar in bars:
-        # Calculate raw delta for this bar
         raw_delta = calculate_bar_delta(
             open_price=bar.get('open', bar.get('o', 0)),
             high=bar.get('high', bar.get('h', 0)),
@@ -92,7 +80,6 @@ def calculate_all_deltas(
         )
         raw_deltas.append(raw_delta)
 
-        # Calculate rolling delta
         roll_delta = calculate_rolling_delta(raw_deltas, roll_period)
 
         results.append({

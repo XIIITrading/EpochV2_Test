@@ -370,11 +370,28 @@ class BarDataCalculator:
         return None
 
     def _calculate_atr_from_df(self, df: pd.DataFrame) -> Optional[float]:
-        """Calculate simple average range from DataFrame (for intraday ATR)."""
+        """
+        Calculate ATR from DataFrame using True Range (SWH-6 standardization).
+
+        True Range = max(high - low, |high - prev_close|, |low - prev_close|)
+        ATR = mean of True Range values
+        """
         if df.empty:
             return None
-        ranges = df['high'] - df['low']
-        return float(ranges.mean())
+        high = df['high'].values
+        low = df['low'].values
+        close = df['close'].values
+        n = len(high)
+        if n < 2:
+            return float(high[0] - low[0]) if n == 1 else None
+        tr = [high[0] - low[0]]  # First bar: simple range (no prev close)
+        for i in range(1, n):
+            tr.append(max(
+                high[i] - low[i],
+                abs(high[i] - close[i - 1]),
+                abs(low[i] - close[i - 1]),
+            ))
+        return float(sum(tr) / len(tr))
 
     # =========================================================================
     # CAMARILLA PIVOTS

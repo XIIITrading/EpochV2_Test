@@ -1,5 +1,10 @@
 """
 Entry Qualifier Calculations Module
+
+All indicator calculations delegate to shared.indicators (canonical).
+This module provides backward-compatible dict-based wrappers.
+
+SWH-6: Single source of truth - shared.indicators
 """
 from calculations.volume_delta import calculate_all_deltas, calculate_bar_delta
 from calculations.candle_range import (

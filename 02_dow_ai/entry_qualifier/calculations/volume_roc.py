@@ -1,89 +1,53 @@
 """
-Volume ROC Calculations
-Epoch Trading System v1 - XIII Trading LLC
+Volume ROC Calculations - Thin Adapter
+Epoch Trading System - XIII Trading LLC
 
-Calculates Volume Rate of Change vs 20-period average.
-Used to confirm momentum/acceleration.
+Delegates to shared.indicators.core.volume_roc (canonical implementation).
+Preserves dict-based return format for backward compatibility with data_worker.
+
+SWH-6: Single source of truth - shared.indicators
 """
 from typing import List, Optional
 
-
-# Default lookback period for volume average
-DEFAULT_LOOKBACK = 20
-
-# Threshold for elevated volume (momentum confirmation)
-ELEVATED_THRESHOLD = 30  # 30%
-
-# Threshold for high volume (strong momentum)
-HIGH_THRESHOLD = 50  # 50%
+from shared.indicators.core.volume_roc import (
+    is_elevated_volume as _shared_is_elevated,
+    is_high_volume as _shared_is_high,
+)
+from shared.indicators.config import CONFIG
 
 
-def calculate_volume_roc(
-    current_volume: float,
-    avg_volume: float
-) -> float:
+# Re-export thresholds from canonical config
+DEFAULT_LOOKBACK = CONFIG.volume_roc.baseline_period       # 20
+ELEVATED_THRESHOLD = CONFIG.volume_roc.elevated_threshold  # 30
+HIGH_THRESHOLD = CONFIG.volume_roc.high_threshold          # 50
+
+
+def calculate_volume_roc(current_volume: float, avg_volume: float) -> float:
     """
     Calculate volume rate of change as percentage.
 
     Formula: ((current - avg) / avg) * 100
-
-    Args:
-        current_volume: Current bar volume
-        avg_volume: Average volume over lookback period
-
-    Returns:
-        Volume ROC as percentage (e.g., 45.0 for +45%)
     """
     if avg_volume <= 0:
         return 0.0
-
     return ((current_volume - avg_volume) / avg_volume) * 100
 
 
-def calculate_volume_average(
-    volumes: List[float],
-    period: int = DEFAULT_LOOKBACK
-) -> Optional[float]:
-    """
-    Calculate simple moving average of volume.
-
-    Args:
-        volumes: List of volume values
-        period: Lookback period for average
-
-    Returns:
-        Average volume, or None if insufficient data
-    """
+def calculate_volume_average(volumes: List[float], period: int = DEFAULT_LOOKBACK) -> Optional[float]:
+    """Calculate simple moving average of volume."""
     if len(volumes) < period:
         return None
-
     return sum(volumes[-period:]) / period
 
 
 def is_elevated_volume(volume_roc: float) -> bool:
-    """
-    Check if volume ROC indicates elevated volume (>=30%).
-
-    Args:
-        volume_roc: Volume ROC as percentage
-
-    Returns:
-        True if volume is elevated
-    """
-    return volume_roc >= ELEVATED_THRESHOLD
+    """Check if volume ROC indicates elevated volume (>=30%)."""
+    return _shared_is_elevated(volume_roc)
 
 
 def is_high_volume(volume_roc: float) -> bool:
-    """
-    Check if volume ROC indicates high volume (>=50%).
-
-    Args:
-        volume_roc: Volume ROC as percentage
-
-    Returns:
-        True if volume is high
-    """
-    return volume_roc >= HIGH_THRESHOLD
+    """Check if volume ROC indicates high volume (>=50%)."""
+    return _shared_is_high(volume_roc)
 
 
 def calculate_all_volume_roc(
@@ -92,8 +56,6 @@ def calculate_all_volume_roc(
 ) -> List[dict]:
     """
     Calculate volume ROC for all bars.
-
-    For bars before the lookback period is available, returns None.
 
     Args:
         bars: List of bar dictionaries with 'volume' or 'v' key
@@ -109,15 +71,13 @@ def calculate_all_volume_roc(
         volume = bar.get('volume', bar.get('v', 0))
         volumes.append(volume)
 
-        # Need at least 'lookback' bars to calculate ROC
-        # We compare current bar to average of previous 'lookback' bars
         if i < lookback:
             results.append({
                 'volume_roc': None,
                 'is_elevated': False
             })
         else:
-            # Calculate average of previous 'lookback' bars (not including current)
+            # Average of previous 'lookback' bars (not including current)
             prev_volumes = volumes[i - lookback:i]
             avg_volume = sum(prev_volumes) / lookback
 
