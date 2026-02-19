@@ -63,6 +63,7 @@ INDICATOR_LABELS = ['Candle %', 'Vol Delta', 'Vol ROC', 'SMA', 'CVD Slope',
 CONTINUOUS_INDICATORS = [
     'candle_range_pct',
     'vol_delta_roll',
+    'vol_delta_norm',
     'vol_roc',
     'sma_spread_pct',
     'cvd_slope',
@@ -80,6 +81,7 @@ CATEGORICAL_INDICATORS = [
 ALL_DEEP_DIVE_INDICATORS = [
     ('candle_range_pct', 'Candle Range %', 'continuous'),
     ('vol_delta_roll', 'Volume Delta (5-bar)', 'continuous'),
+    ('vol_delta_norm', 'Vol Delta Normalized', 'continuous'),
     ('vol_roc', 'Volume ROC', 'continuous'),
     ('sma_spread_pct', 'SMA Spread %', 'continuous'),
     ('cvd_slope', 'CVD Slope', 'continuous'),

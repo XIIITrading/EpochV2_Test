@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS m1_indicator_bars_2 (
     candle_range_pct NUMERIC(10, 6),       -- (high-low)/close * 100
     vol_delta_raw NUMERIC(12, 2),          -- Single bar delta: ((2*(close-low)/(high-low))-1)*volume
     vol_delta_roll NUMERIC(12, 2),         -- 5-bar rolling sum of raw delta
+    vol_delta_norm NUMERIC(10, 6),        -- vol_delta_roll / avg_volume (5-bar), cross-ticker comparable
     vol_roc NUMERIC(10, 4),               -- ((vol-avg20)/avg20)*100
     sma9 NUMERIC(12, 4),                  -- 9-period SMA
     sma21 NUMERIC(12, 4),                 -- 21-period SMA

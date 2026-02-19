@@ -178,7 +178,7 @@ class M1IndicatorBarsPopulator:
             INSERT INTO {TARGET_TABLE} (
                 ticker, bar_date, bar_time,
                 open, high, low, close, volume,
-                candle_range_pct, vol_delta_raw, vol_delta_roll, vol_roc,
+                candle_range_pct, vol_delta_raw, vol_delta_roll, vol_delta_norm, vol_roc,
                 sma9, sma21, sma_config, sma_spread_pct, price_position,
                 vwap, sma_spread, sma_momentum_ratio, sma_momentum_label, cvd_slope,
                 h4_structure, h1_structure, m15_structure, m5_structure, m1_structure,
@@ -203,6 +203,7 @@ class M1IndicatorBarsPopulator:
                 self._convert_numpy(r.candle_range_pct),
                 self._convert_numpy(r.vol_delta_raw),
                 self._convert_numpy(r.vol_delta_roll),
+                self._convert_numpy(r.vol_delta_norm),
                 self._convert_numpy(r.vol_roc),
                 self._convert_numpy(r.sma9),
                 self._convert_numpy(r.sma21),

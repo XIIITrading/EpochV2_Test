@@ -193,6 +193,9 @@ class DataProvider:
                 AVG(CASE WHEN s.direction = 'SHORT'
                     THEN -r.vol_delta_roll ELSE r.vol_delta_roll END
                 ) as avg_vol_delta,
+                AVG(CASE WHEN s.direction = 'SHORT'
+                    THEN -r.vol_delta_norm ELSE r.vol_delta_norm END
+                ) as avg_vol_delta_norm,
                 AVG(r.vol_roc) as avg_vol_roc,
                 AVG(r.sma_spread_pct) as avg_sma_spread,
                 AVG(CASE WHEN s.direction = 'SHORT'
@@ -241,6 +244,9 @@ class DataProvider:
                 AVG(CASE WHEN s.direction = 'SHORT'
                     THEN -p.vol_delta_roll ELSE p.vol_delta_roll END
                 ) as avg_vol_delta,
+                AVG(CASE WHEN s.direction = 'SHORT'
+                    THEN -p.vol_delta_norm ELSE p.vol_delta_norm END
+                ) as avg_vol_delta_norm,
                 AVG(p.vol_roc) as avg_vol_roc,
                 AVG(p.sma_spread_pct) as avg_sma_spread,
                 AVG(CASE WHEN s.direction = 'SHORT'
@@ -346,7 +352,7 @@ class DataProvider:
     # ------------------------------------------------------------------
     # Indicators where positive = bullish, negative = bearish
     # These get sign-flipped for SHORT trades so positive = "favorable"
-    DIRECTIONAL_INDICATORS = {'vol_delta_roll', 'cvd_slope'}
+    DIRECTIONAL_INDICATORS = {'vol_delta_roll', 'vol_delta_norm', 'cvd_slope'}
 
     def get_three_phase_averages(self, trade_ids: List[str],
                                  indicator_col: str) -> pd.DataFrame:

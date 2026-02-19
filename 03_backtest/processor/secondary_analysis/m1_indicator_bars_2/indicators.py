@@ -420,10 +420,11 @@ class M1IndicatorCalculator:
 
     def _add_volume_delta(self, df: pd.DataFrame) -> pd.DataFrame:
         """
-        Add Volume Delta columns (raw single-bar + rolling sum).
+        Add Volume Delta columns (raw single-bar + rolling sum + normalized).
 
         v2 change: Now produces both vol_delta_raw and vol_delta_roll
         (v1 only produced the rolling sum as vol_delta).
+        v3 change: Added vol_delta_norm (roll / avg_volume) for cross-ticker comparability.
         """
         # Calculate bar delta for each row using centralized calculation
         df['vol_delta_raw'] = df.apply(_calculate_bar_delta, axis=1)
@@ -433,6 +434,15 @@ class M1IndicatorCalculator:
             window=VOLUME_DELTA_ROLLING_PERIOD,
             min_periods=VOLUME_DELTA_ROLLING_PERIOD
         ).sum()
+
+        # Normalize by average volume for cross-ticker comparability
+        # Same pattern as CVD slope normalization (see _add_cvd_slope)
+        df['_avg_vol_5'] = df['volume'].rolling(
+            window=VOLUME_DELTA_ROLLING_PERIOD,
+            min_periods=VOLUME_DELTA_ROLLING_PERIOD
+        ).mean()
+        df['vol_delta_norm'] = df['vol_delta_roll'] / df['_avg_vol_5'].replace(0, np.nan)
+        df = df.drop(columns=['_avg_vol_5'])
 
         # Keep backward-compatible vol_delta alias for health score and composite scores
         df['vol_delta'] = df['vol_delta_roll']

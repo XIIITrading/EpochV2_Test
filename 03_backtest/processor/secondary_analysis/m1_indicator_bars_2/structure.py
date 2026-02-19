@@ -27,6 +27,11 @@ import time as time_module
 import pandas as pd
 import psycopg2
 from psycopg2.extras import RealDictCursor
+import pytz
+
+# Timezone constants for Polygon timestamp conversion
+_ET = pytz.timezone('America/New_York')
+_UTC = pytz.UTC
 
 # Use explicit path imports to avoid collisions with 03_indicators modules
 import importlib.util
@@ -361,14 +366,16 @@ class HTFBarFetcher:
 
                 bars = []
                 for result in data['results']:
-                    # Convert timestamp
+                    # Convert Polygon UTC timestamp to Eastern Time
+                    # (matches m1_bars_storage.py conversion pattern)
                     ts_ms = result['t']
-                    ts = datetime.utcfromtimestamp(ts_ms / 1000)
+                    ts_utc = datetime.utcfromtimestamp(ts_ms / 1000).replace(tzinfo=_UTC)
+                    ts = ts_utc.astimezone(_ET)
 
                     bar = {
                         'timestamp': ts,
                         'bar_date': ts.date(),
-                        'bar_time': ts.time(),
+                        'bar_time': ts.time().replace(tzinfo=None),
                         'open': result['o'],
                         'high': result['h'],
                         'low': result['l'],

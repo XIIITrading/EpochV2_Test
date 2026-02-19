@@ -120,10 +120,12 @@ HTF_BARS_NEEDED = {
 }
 
 # Lookback days for fetching HTF bars from Polygon
+# M5/M15 need enough days to survive 3-day weekends + holiday gaps
+# (e.g., Sat/Sun/Presidents' Day = 3 non-trading days before Tuesday open)
 HTF_LOOKBACK_DAYS = {
     'M1': 1,
-    'M5': 3,
-    'M15': 7,
+    'M5': 5,
+    'M15': 10,
     'H1': 14,
     'H4': 30,
 }

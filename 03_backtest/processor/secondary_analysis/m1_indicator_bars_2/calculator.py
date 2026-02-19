@@ -78,6 +78,7 @@ class M1IndicatorBarResult:
     candle_range_pct: Optional[float]
     vol_delta_raw: Optional[float]
     vol_delta_roll: Optional[float]
+    vol_delta_norm: Optional[float]
     vol_roc: Optional[float]
     sma9: Optional[float]
     sma21: Optional[float]
@@ -247,6 +248,7 @@ class M1IndicatorBarsCalculator:
                 candle_range_pct=self._safe_float(row.get('candle_range_pct')),
                 vol_delta_raw=self._safe_float(row.get('vol_delta_raw')),
                 vol_delta_roll=self._safe_float(row.get('vol_delta_roll')),
+                vol_delta_norm=self._safe_float(row.get('vol_delta_norm')),
                 vol_roc=self._safe_float(row.get('vol_roc')),
                 sma9=self._safe_float(row.get('sma9')),
                 sma21=self._safe_float(row.get('sma21')),

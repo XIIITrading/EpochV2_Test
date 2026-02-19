@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS m1_trade_indicator_2 (
     candle_range_pct    NUMERIC(10, 6),
     vol_delta_raw       NUMERIC(12, 2),
     vol_delta_roll      NUMERIC(12, 2),
+    vol_delta_norm      NUMERIC(10, 6),
     vol_roc             NUMERIC(10, 4),
     sma9                NUMERIC(12, 4),
     sma21               NUMERIC(12, 4),

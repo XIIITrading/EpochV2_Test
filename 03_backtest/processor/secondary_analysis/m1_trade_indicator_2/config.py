@@ -61,7 +61,7 @@ TARGET_TABLE = "m1_trade_indicator_2"
 INDICATOR_COLUMNS = [
     'open', 'high', 'low', 'close', 'volume',
     'candle_range_pct',
-    'vol_delta_raw', 'vol_delta_roll',
+    'vol_delta_raw', 'vol_delta_roll', 'vol_delta_norm',
     'vol_roc',
     'sma9', 'sma21', 'sma_config', 'sma_spread_pct',
     'sma_momentum_label', 'price_position',

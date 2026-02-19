@@ -217,7 +217,8 @@ class ResultsExporter:
 
             indicators = [
                 ('avg_candle_range', 'Candle Range %'),
-                ('avg_vol_delta', 'Vol Delta (normalized)'),
+                ('avg_vol_delta', 'Vol Delta (raw, normalized)'),
+                ('avg_vol_delta_norm', 'Vol Delta (% of Avg Vol)'),
                 ('avg_vol_roc', 'Vol ROC %'),
                 ('avg_sma_spread', 'SMA Spread %'),
                 ('avg_cvd_slope', 'CVD Slope (normalized)'),
@@ -251,14 +252,16 @@ class ResultsExporter:
 
             lines.append(f"### {label}")
             lines.append("")
-            lines.append("| Bar | Candle Range | Vol Delta | Vol ROC | SMA Spread | CVD Slope |")
-            lines.append("|-----|-------------|-----------|---------|-----------|-----------|")
+            lines.append("| Bar | Candle Range | Vol Delta | Vol Delta Norm | Vol ROC | SMA Spread | CVD Slope |")
+            lines.append("|-----|-------------|-----------|----------------|---------|-----------|-----------|")
 
             for _, row in subset.iterrows():
+                vdn = row.get('avg_vol_delta_norm', 0) or 0
                 lines.append(
                     f"| {int(row['bar_sequence'])} | "
                     f"{row['avg_candle_range']:.6f} | "
                     f"{row['avg_vol_delta']:.6f} | "
+                    f"{vdn:.6f} | "
                     f"{row['avg_vol_roc']:.4f} | "
                     f"{row['avg_sma_spread']:.6f} | "
                     f"{row['avg_cvd_slope']:.6f} |"
@@ -362,6 +365,7 @@ class ResultsExporter:
         cont_indicators = [
             ('candle_range_pct', 'Candle Range %'),
             ('vol_delta_roll', 'Volume Delta (5-bar)'),
+            ('vol_delta_norm', 'Vol Delta Normalized (% of Avg Vol)'),
             ('vol_roc', 'Volume ROC'),
             ('sma_spread_pct', 'SMA Spread %'),
             ('cvd_slope', 'CVD Slope'),
@@ -441,7 +445,8 @@ class ResultsExporter:
 
             indicators = [
                 ('avg_candle_range', 'Candle Range %'),
-                ('avg_vol_delta', 'Vol Delta (normalized)'),
+                ('avg_vol_delta', 'Vol Delta (raw, normalized)'),
+                ('avg_vol_delta_norm', 'Vol Delta (% of Avg Vol)'),
                 ('avg_vol_roc', 'Vol ROC %'),
                 ('avg_sma_spread', 'SMA Spread %'),
                 ('avg_cvd_slope', 'CVD Slope (normalized)'),
@@ -475,14 +480,16 @@ class ResultsExporter:
 
             lines.append(f"### {label}")
             lines.append("")
-            lines.append("| Bar | Candle Range | Vol Delta | Vol ROC | SMA Spread | CVD Slope |")
-            lines.append("|-----|-------------|-----------|---------|-----------|-----------|")
+            lines.append("| Bar | Candle Range | Vol Delta | Vol Delta Norm | Vol ROC | SMA Spread | CVD Slope |")
+            lines.append("|-----|-------------|-----------|----------------|---------|-----------|-----------|")
 
             for _, row in subset.iterrows():
+                vdn = row.get('avg_vol_delta_norm', 0) or 0
                 lines.append(
                     f"| {int(row['bar_sequence'])} | "
                     f"{row['avg_candle_range']:.6f} | "
                     f"{row['avg_vol_delta']:.6f} | "
+                    f"{vdn:.6f} | "
                     f"{row['avg_vol_roc']:.4f} | "
                     f"{row['avg_sma_spread']:.6f} | "
                     f"{row['avg_cvd_slope']:.6f} |"
