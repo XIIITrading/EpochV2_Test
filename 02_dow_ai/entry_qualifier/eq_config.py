@@ -8,6 +8,7 @@ Configuration settings for the Entry Qualifier application.
 # Rolling window settings
 ROLLING_BARS = 25
 REFRESH_INTERVAL_MS = 60000  # 60 seconds
+FETCH_DELAY_MS = 5000  # 5s delay after minute boundary for Polygon to finalize candle
 VOL_DELTA_ROLL_PERIOD = 5
 VOL_ROC_LOOKBACK = 20  # 20-bar lookback for volume ROC
 M5_BARS_NEEDED = 50   # 50 M5 bars for structure analysis (~4 hours)

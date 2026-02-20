@@ -104,6 +104,10 @@ class PolygonClient:
 
         return None
 
+    def _to_epoch_ms(self, dt: datetime) -> int:
+        """Convert datetime to milliseconds since epoch for Polygon API."""
+        return int(dt.timestamp() * 1000)
+
     def fetch_m1_bars(
         self,
         ticker: str,
@@ -123,12 +127,12 @@ class PolygonClient:
         end_datetime = datetime.now(self.tz)
         start_datetime = end_datetime - timedelta(days=2)
 
-        # Format dates for API
-        from_date = start_datetime.strftime('%Y-%m-%d')
-        to_date = end_datetime.strftime('%Y-%m-%d')
+        # Use millisecond timestamps so Polygon returns bars up to current moment
+        from_ts = self._to_epoch_ms(start_datetime)
+        to_ts = self._to_epoch_ms(end_datetime)
 
-        # Build URL
-        url = f"{self.base_url}/v2/aggs/ticker/{ticker}/range/1/minute/{from_date}/{to_date}"
+        # Build URL with ms timestamps for precise range
+        url = f"{self.base_url}/v2/aggs/ticker/{ticker}/range/1/minute/{from_ts}/{to_ts}"
 
         params = {
             'adjusted': 'true',
@@ -186,12 +190,12 @@ class PolygonClient:
         end_datetime = datetime.now(self.tz)
         start_datetime = end_datetime - timedelta(days=5)
 
-        # Format dates for API
-        from_date = start_datetime.strftime('%Y-%m-%d')
-        to_date = end_datetime.strftime('%Y-%m-%d')
+        # Use millisecond timestamps so Polygon returns bars up to current moment
+        from_ts = self._to_epoch_ms(start_datetime)
+        to_ts = self._to_epoch_ms(end_datetime)
 
-        # Build URL for 1-hour bars
-        url = f"{self.base_url}/v2/aggs/ticker/{ticker}/range/1/hour/{from_date}/{to_date}"
+        # Build URL for 1-hour bars with ms timestamps
+        url = f"{self.base_url}/v2/aggs/ticker/{ticker}/range/1/hour/{from_ts}/{to_ts}"
 
         params = {
             'adjusted': 'true',
@@ -247,10 +251,10 @@ class PolygonClient:
         end_datetime = datetime.now(self.tz)
         start_datetime = end_datetime - timedelta(days=2)
 
-        from_date = start_datetime.strftime('%Y-%m-%d')
-        to_date = end_datetime.strftime('%Y-%m-%d')
+        from_ts = self._to_epoch_ms(start_datetime)
+        to_ts = self._to_epoch_ms(end_datetime)
 
-        url = f"{self.base_url}/v2/aggs/ticker/{ticker}/range/5/minute/{from_date}/{to_date}"
+        url = f"{self.base_url}/v2/aggs/ticker/{ticker}/range/5/minute/{from_ts}/{to_ts}"
 
         params = {
             'adjusted': 'true',
@@ -303,10 +307,10 @@ class PolygonClient:
         end_datetime = datetime.now(self.tz)
         start_datetime = end_datetime - timedelta(days=3)
 
-        from_date = start_datetime.strftime('%Y-%m-%d')
-        to_date = end_datetime.strftime('%Y-%m-%d')
+        from_ts = self._to_epoch_ms(start_datetime)
+        to_ts = self._to_epoch_ms(end_datetime)
 
-        url = f"{self.base_url}/v2/aggs/ticker/{ticker}/range/15/minute/{from_date}/{to_date}"
+        url = f"{self.base_url}/v2/aggs/ticker/{ticker}/range/15/minute/{from_ts}/{to_ts}"
 
         params = {
             'adjusted': 'true',

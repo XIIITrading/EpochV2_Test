@@ -27,7 +27,7 @@ from typing import Dict, List, Optional
 
 from eq_config import (
     WINDOW_WIDTH, WINDOW_HEIGHT, MAX_TICKERS,
-    REFRESH_INTERVAL_MS, ROLLING_BARS, PREFETCH_BARS
+    ROLLING_BARS, PREFETCH_BARS, FETCH_DELAY_MS
 )
 from data.market_hours import MarketHours
 from data.api_client import PolygonClient
@@ -63,8 +63,6 @@ class MainWindow(QMainWindow):
         self._api_client = PolygonClient()
 
         # Timers
-        self._refresh_timer = QTimer(self)
-        self._refresh_timer.timeout.connect(self._on_refresh_timer)
         self._clock_timer = QTimer(self)
         self._clock_timer.timeout.connect(self._update_clock)
         self._countdown_timer = QTimer(self)
@@ -229,25 +227,26 @@ class MainWindow(QMainWindow):
         self._update_market_status()
 
     def _sync_to_minute_boundary(self):
-        """Sync the refresh timer to the next minute boundary."""
+        """Sync the refresh timer to the next minute boundary + fetch delay."""
         seconds_until = self._market_hours.seconds_until_next_minute()
-        self._next_refresh_seconds = seconds_until
+        delay_ms = (seconds_until * 1000) + FETCH_DELAY_MS
+        self._next_refresh_seconds = seconds_until + (FETCH_DELAY_MS // 1000)
 
-        # Start refresh timer with initial delay to sync to minute
-        self._refresh_timer.stop()
-        # Use single shot for initial sync, then regular interval
-        QTimer.singleShot(seconds_until * 1000, self._start_regular_refresh)
+        # Single-shot to :00 + offset, then re-sync each cycle
+        QTimer.singleShot(delay_ms, self._on_minute_boundary)
 
-        self._update_status(f"Syncing to minute boundary ({seconds_until}s)")
+        self._update_status(f"Syncing to minute boundary ({self._next_refresh_seconds}s)")
 
-    def _start_regular_refresh(self):
-        """Start the regular refresh cycle after initial sync."""
-        # Trigger first refresh
+    def _on_minute_boundary(self):
+        """Fire refresh after minute boundary + offset, then schedule next."""
+        # Refresh all tickers now
         self._on_refresh_timer()
 
-        # Start regular interval
-        self._refresh_timer.start(REFRESH_INTERVAL_MS)
-        self._next_refresh_seconds = 60
+        # Re-sync to the next minute boundary + offset (avoids drift)
+        seconds_until = self._market_hours.seconds_until_next_minute()
+        delay_ms = (seconds_until * 1000) + FETCH_DELAY_MS
+        self._next_refresh_seconds = seconds_until + (FETCH_DELAY_MS // 1000)
+        QTimer.singleShot(delay_ms, self._on_minute_boundary)
 
     def _update_clock(self):
         """Update the clock display."""
@@ -290,7 +289,6 @@ class MainWindow(QMainWindow):
     @pyqtSlot()
     def _on_refresh_timer(self):
         """Handle refresh timer tick."""
-        self._next_refresh_seconds = 60
         self._update_market_status()
 
         if not self._is_market_open:
@@ -530,7 +528,6 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         """Handle window close."""
         # Stop timers
-        self._refresh_timer.stop()
         self._clock_timer.stop()
         self._countdown_timer.stop()
 

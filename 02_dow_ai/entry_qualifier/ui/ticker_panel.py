@@ -22,35 +22,42 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QFont
 from typing import List, Optional
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 from eq_config import ROLLING_BARS, MILLION_THRESHOLD, THOUSAND_THRESHOLD
 from ui.styles import COLORS, get_delta_style
+
+# Eastern Time zone for display
+_ET = ZoneInfo("America/New_York")
 
 
 class TickerPanel(QFrame):
     """
     Panel widget for displaying a single ticker's rolling data.
 
-    Displays a table with 7 rows and 26 columns (25 rolling bars + label column).
-    Rows: Candle Range, Vol Delta, Vol ROC, SMA Config, M5 Struct, M15 Struct, H1 Structure
+    Displays a table with 8 rows and 26 columns (25 rolling bars + label column).
+    Rows: Time, Candle Range, Vol Delta, Vol ROC, SMA Config, M5 Struct, M15 Struct, H1 Structure
     """
 
     # Signal emitted when remove button is clicked
     remove_requested = pyqtSignal(str)  # ticker
 
     # Row indices (top to bottom)
-    ROW_CANDLE_RANGE = 0
-    ROW_VOL_DELTA = 1
-    ROW_VOL_ROC = 2
-    ROW_SMA_CONFIG = 3
-    ROW_M5_STRUCTURE = 4
-    ROW_M15_STRUCTURE = 5
-    ROW_H1_STRUCTURE = 6
+    ROW_TIME = 0
+    ROW_CANDLE_RANGE = 1
+    ROW_VOL_DELTA = 2
+    ROW_VOL_ROC = 3
+    ROW_SMA_CONFIG = 4
+    ROW_M5_STRUCTURE = 5
+    ROW_M15_STRUCTURE = 6
+    ROW_H1_STRUCTURE = 7
 
-    NUM_ROWS = 7
+    NUM_ROWS = 8
 
     # Row labels
     ROW_LABELS = {
+        ROW_TIME: 'Time',
         ROW_CANDLE_RANGE: 'Candle %',
         ROW_VOL_DELTA: 'Vol Δ',
         ROW_VOL_ROC: 'Vol ROC',
@@ -222,12 +229,16 @@ class TickerPanel(QFrame):
         for i, bar in enumerate(reversed(display_bars)):
             col = i + 1  # +1 because column 0 is the label column
 
+            # Update Time (Row 0)
+            timestamp_ms = bar.get('timestamp', 0)
+            self._update_time_cell(col, timestamp_ms)
+
             # Get indicator values
             candle_range_pct = bar.get('candle_range_pct', 0)
             roll_delta = bar.get('roll_delta')
             volume_roc = bar.get('volume_roc')
 
-            # Update Candle Range % (Row 0)
+            # Update Candle Range %
             self._update_candle_range_cell(col, candle_range_pct)
 
             # Update Vol Delta (Row 1) - using roll_delta as primary
@@ -255,6 +266,28 @@ class TickerPanel(QFrame):
             h1_display = bar.get('h1_display')
             h1_structure = bar.get('h1_structure')
             self._update_structure_cell(self.ROW_H1_STRUCTURE, col, h1_display, h1_structure)
+
+    def _update_time_cell(self, col: int, timestamp_ms: int):
+        """Update the time cell with HH:MM format from millisecond epoch."""
+        item = self.table.item(self.ROW_TIME, col)
+        if not item:
+            item = QTableWidgetItem()
+            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.table.setItem(self.ROW_TIME, col, item)
+
+        item.setBackground(QColor(COLORS['bg_cell']))
+
+        if timestamp_ms == 0:
+            item.setText('-')
+            item.setForeground(QColor(COLORS['text_muted']))
+            return
+
+        # Convert ms epoch to ET time string
+        dt = datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc)
+        # Polygon timestamps are UTC — convert to ET
+        et = dt.astimezone(_ET)
+        item.setText(et.strftime("%H:%M"))
+        item.setForeground(QColor(COLORS['text_secondary']))
 
     def _update_delta_cell(self, row: int, col: int, value: Optional[float]):
         """Update a delta cell."""
