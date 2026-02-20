@@ -1,0 +1,178 @@
+// =============================================================================
+// EPOCH INDICATOR BREAKDOWN - #2: SMA CONFIGURATION & EXPANSION
+// XIII Trading LLC
+// =============================================================================
+//
+// PURPOSE: Isolate and validate the SMA alignment + expansion signal.
+//
+// WHAT IT MEASURES:
+//   SMA 9/21 relationship tells you which side of the market is in control.
+//   The SPREAD between them (and whether it's widening or narrowing) shows
+//   if that control is strengthening or fading.
+//
+// THREE SIGNALS IN ONE:
+//   1. CONFIG (direction): SMA9 > SMA21 = BULL, SMA9 < SMA21 = BEAR
+//   2. EXPANSION: Spread widening = trend strengthening
+//   3. PRICE POSITION: Price above both / below both / between = momentum context
+//
+// WHAT TO LOOK FOR:
+//   - Green area expanding upward = bullish trend strengthening
+//   - Red area expanding downward = bearish trend strengthening
+//   - Area contracting toward zero = trend exhaustion / potential reversal
+//   - Zero cross = configuration flip (key event!)
+//   - Price position line above/below histogram = price leading/lagging the MAs
+//
+// CANONICAL FORMULA (matches 00_shared/indicators/core/sma.py):
+//   sma9 = SMA(close, 9)
+//   sma21 = SMA(close, 21)
+//   spread = sma9 - sma21
+//   config = "BULL" if sma9 > sma21 else "BEAR" if sma9 < sma21 else "FLAT"
+//   spread_pct = abs(spread) / close * 100
+//   wide_spread = spread_pct >= 0.15%
+//
+// =============================================================================
+
+//@version=6
+indicator("Epoch #2: SMA Config", shorttitle="② SMA", overlay=false, precision=4)
+
+
+// =============================================================================
+// INPUTS
+// =============================================================================
+fast_period    = input.int(9, "Fast SMA Period", minval=2, maxval=50,
+     tooltip="Canonical = 9")
+slow_period    = input.int(21, "Slow SMA Period", minval=5, maxval=100,
+     tooltip="Canonical = 21")
+mom_lookback   = input.int(10, "Momentum Lookback", minval=3, maxval=30,
+     tooltip="Bars back to compare spread for WIDENING/NARROWING. Canonical = 10")
+wide_thresh    = input.float(0.15, "Wide Spread Threshold %", minval=0.05, maxval=0.5, step=0.01,
+     tooltip="Spread % of price above this = strong trend. Canonical = 0.15%")
+
+
+// =============================================================================
+// CORE CALCULATION
+// =============================================================================
+
+// --- SMA Values ---
+sma_fast = ta.sma(close, fast_period)
+sma_slow = ta.sma(close, slow_period)
+
+// --- Spread ---
+spread = sma_fast - sma_slow
+spread_pct = close > 0 ? math.abs(spread) / close * 100.0 : 0.0
+
+// --- Configuration ---
+config_bull = sma_fast > sma_slow
+config_bear = sma_fast < sma_slow
+
+// --- Expansion / Contraction ---
+spread_prev = sma_fast[1] - sma_slow[1]
+expanding = math.abs(spread) > math.abs(spread_prev)
+
+// --- Momentum (canonical: compare abs(spread) now vs N bars ago) ---
+spread_then = sma_fast[mom_lookback] - sma_slow[mom_lookback]
+abs_now = math.abs(spread)
+abs_then = math.abs(spread_then)
+ratio = abs_then > 0 ? abs_now / abs_then : 1.0
+is_widening = ratio > 1.1    // Canonical widening_threshold
+is_narrowing = ratio < 0.9   // Canonical narrowing_threshold
+
+// --- Price Position ---
+higher_sma = math.max(sma_fast, sma_slow)
+lower_sma = math.min(sma_fast, sma_slow)
+price_above = close > higher_sma
+price_below = close < lower_sma
+price_between = not price_above and not price_below
+
+// --- Normalized spread for histogram (-100 to +100) ---
+spread_abs_hi = ta.highest(math.abs(spread), 25)
+spread_norm = spread_abs_hi > 0 ? (spread / spread_abs_hi) * 100.0 : 0.0
+
+
+// =============================================================================
+// COLORS
+// =============================================================================
+C_BULL_WIDE   = #00E676   // Bright green - wide bull spread
+C_BULL        = #26a69a   // Normal bull
+C_BULL_NARROW = #1a5c4a   // Narrowing bull
+C_BEAR_WIDE   = #FF1744   // Bright red - wide bear spread
+C_BEAR        = #ef5350   // Normal bear
+C_BEAR_NARROW = #5c2a1a   // Narrowing bear
+C_FLAT        = #555555
+
+// Spread histogram color
+spread_color = config_bull ?
+     (spread_pct >= wide_thresh ? C_BULL_WIDE : expanding ? C_BULL : C_BULL_NARROW) :
+     config_bear ?
+     (spread_pct >= wide_thresh ? C_BEAR_WIDE : expanding ? C_BEAR : C_BEAR_NARROW) :
+     C_FLAT
+
+// Price position as a step line
+price_pos_val = price_above ? 85.0 : price_below ? -85.0 : 0.0
+price_pos_color = price_above ? #00BCD4 : price_below ? #E040FB : #444444
+
+
+// =============================================================================
+// PLOTTING
+// =============================================================================
+
+// Zero and reference lines
+hline(0, "Zero (SMA Cross)", color.new(color.white, 50), hline.style_solid, 1)
+hline(50, "+50", color.new(color.gray, 88), hline.style_dotted, 1)
+hline(-50, "-50", color.new(color.gray, 88), hline.style_dotted, 1)
+
+// Spread histogram (main signal)
+plot(spread_norm, "SMA Spread", spread_color, 5, plot.style_histogram)
+
+// Expansion/contraction highlight: bright outline when widening
+plot(is_widening and math.abs(spread_norm) > 10 ? spread_norm : na,
+     "Widening", color.new(config_bull ? #00E676 : #FF1744, 30), 2, plot.style_histogram)
+
+// Price position step line (shows if price is above/below/between the SMAs)
+plot(price_pos_val, "Price Position", price_pos_color, 2, plot.style_stepline_diamond)
+
+// Wide spread threshold markers
+plot(spread_pct >= wide_thresh and config_bull ? 100 : na,
+     "Wide Bull", color.new(#00E676, 60), 1, plot.style_circles)
+plot(spread_pct >= wide_thresh and config_bear ? -100 : na,
+     "Wide Bear", color.new(#FF1744, 60), 1, plot.style_circles)
+
+
+// =============================================================================
+// INFO TABLE
+// =============================================================================
+if barstate.islast
+    var table info = table.new(position.top_right, 2, 6,
+         bgcolor=color.new(#1a1a2e, 10), border_width=1, border_color=color.new(color.gray, 60))
+
+    table.cell(info, 0, 0, "SMA CONFIG", text_color=color.white, text_size=size.small,
+         bgcolor=color.new(#0f3460, 10))
+    table.cell(info, 1, 0, "", bgcolor=color.new(#0f3460, 10))
+
+    // Config
+    cfg_str = config_bull ? "BULL ▲" : config_bear ? "BEAR ▼" : "FLAT ─"
+    cfg_clr = config_bull ? C_BULL_WIDE : config_bear ? C_BEAR_WIDE : C_FLAT
+    table.cell(info, 0, 1, "Config", text_color=color.white, text_size=size.tiny)
+    table.cell(info, 1, 1, cfg_str, text_color=cfg_clr, text_size=size.tiny)
+
+    // Spread %
+    table.cell(info, 0, 2, "Spread %", text_color=color.white, text_size=size.tiny)
+    table.cell(info, 1, 2, str.tostring(spread_pct, "#.####") + "%", text_color=cfg_clr, text_size=size.tiny)
+
+    // Momentum
+    mom_str = is_widening ? "WIDENING ▲▲" : is_narrowing ? "NARROWING ▼▼" : "STABLE ─"
+    mom_clr = is_widening ? #00E676 : is_narrowing ? #FF9800 : C_FLAT
+    table.cell(info, 0, 3, "Momentum", text_color=color.white, text_size=size.tiny)
+    table.cell(info, 1, 3, mom_str, text_color=mom_clr, text_size=size.tiny)
+
+    // Price Position
+    pp_str = price_above ? "ABOVE ▲" : price_below ? "BELOW ▼" : "BETWEEN ─"
+    pp_clr = price_above ? #00BCD4 : price_below ? #E040FB : C_FLAT
+    table.cell(info, 0, 4, "Price Pos", text_color=color.white, text_size=size.tiny)
+    table.cell(info, 1, 4, pp_str, text_color=pp_clr, text_size=size.tiny)
+
+    // Wide spread flag
+    wide_str = spread_pct >= wide_thresh ? "YES ✓" : "NO"
+    wide_clr = spread_pct >= wide_thresh ? #00E676 : C_FLAT
+    table.cell(info, 0, 5, "Wide?", text_color=color.white, text_size=size.tiny)
+    table.cell(info, 1, 5, wide_str, text_color=wide_clr, text_size=size.tiny)

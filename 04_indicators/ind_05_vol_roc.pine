@@ -1,0 +1,174 @@
+// =============================================================================
+// EPOCH INDICATOR BREAKDOWN - #5: VOLUME RATE OF CHANGE
+// XIII Trading LLC
+// =============================================================================
+//
+// PURPOSE: Isolate and validate the Volume ROC signal.
+//
+// WHAT IT MEASURES:
+//   Current bar's volume vs the average of the previous N bars (baseline).
+//   Expressed as a PERCENTAGE: 0% = average, +30% = elevated, +50% = high
+//   Tells you: "Is this bar seeing more or less participation than usual?"
+//
+// WHY IT MATTERS:
+//   Volume ROC is a MOMENTUM MODIFIER — it doesn't tell you direction.
+//   It tells you whether the market CARES about the current move:
+//   - High Vol ROC + Continuation conviction = strong, valid signal
+//   - Low Vol ROC + Continuation conviction = weak, fading signal
+//   - High Vol ROC + Absorption = heavy fighting (important information!)
+//   - Low Vol ROC + Absorption = market asleep (no signal)
+//
+// WHAT TO LOOK FOR:
+//   1. Tall green bars = volume well above average (market engaged)
+//   2. Red bars = volume below average (market disengaged)
+//   3. Spikes = breakout bars, stops hit, news events
+//   4. Declining from spike = participation fading after event
+//   5. Rising from low = market waking up (potential move incoming)
+//
+// CANONICAL FORMULA (matches 00_shared/indicators/core/volume_roc.py):
+//   baseline_avg = SMA(volume[1], 20)     // Note: [1] = exclude current bar
+//   roc = ((volume - baseline_avg) / baseline_avg) * 100
+//
+// THRESHOLDS:
+//   > +30% = Elevated (Above Avg)
+//   > +50% = High
+//   < -10% = Below Avg
+//
+// =============================================================================
+
+//@version=6
+indicator("Epoch #5: Vol ROC", shorttitle="⑤ VolROC", overlay=false, precision=1)
+
+
+// =============================================================================
+// INPUTS
+// =============================================================================
+baseline_period = input.int(20, "Baseline Period", minval=5, maxval=50,
+     tooltip="Number of prior bars for average. Canonical = 20")
+elevated_thresh = input.float(30.0, "Elevated Threshold %", minval=10, maxval=100, step=5,
+     tooltip="ROC above this = elevated participation. Canonical = 30%")
+high_thresh     = input.float(50.0, "High Threshold %", minval=20, maxval=200, step=10,
+     tooltip="ROC above this = high participation. Canonical = 50%")
+below_thresh    = input.float(-10.0, "Below Avg Threshold %", minval=-50, maxval=0, step=5,
+     tooltip="ROC below this = below average. Canonical = -10%")
+show_baseline   = input.bool(true, "Show Baseline Volume Line",
+     tooltip="Overlay the average volume level as a reference line")
+cap_display     = input.float(200.0, "Display Cap %", minval=100, maxval=500, step=50,
+     tooltip="Cap the display at this ROC % to prevent spikes from crushing the view")
+
+
+// =============================================================================
+// CORE CALCULATION
+// =============================================================================
+
+// --- Baseline average (exclude current bar, per canonical formula) ---
+baseline_avg = ta.sma(volume[1], baseline_period)
+
+// --- Volume ROC as percentage ---
+vol_roc = baseline_avg != 0 ? ((volume - baseline_avg) / baseline_avg) * 100.0 : 0.0
+
+// --- Capped for display ---
+vol_roc_display = math.max(-100.0, math.min(cap_display, vol_roc))
+
+// --- Classification ---
+is_elevated = vol_roc >= elevated_thresh
+is_high = vol_roc >= high_thresh
+is_below = vol_roc < below_thresh
+is_average = not is_elevated and not is_below
+
+// --- Simple momentum: is vol ROC trending up or down over 3 bars ---
+roc_rising = vol_roc > vol_roc[1] and vol_roc[1] > vol_roc[2]
+roc_falling = vol_roc < vol_roc[1] and vol_roc[1] < vol_roc[2]
+
+
+// =============================================================================
+// COLORS
+// =============================================================================
+C_HIGH        = #00E676   // Bright green - high volume
+C_ELEVATED    = #26a69a   // Medium green - elevated
+C_AVERAGE     = #555555   // Gray - average
+C_BELOW       = #5c2a1a   // Dim red - below average
+C_THRESHOLD   = #FFEB3B   // Yellow for threshold lines
+
+// Histogram color
+hist_color = is_high ? C_HIGH :
+     is_elevated ? C_ELEVATED :
+     is_below ? C_BELOW :
+     C_AVERAGE
+
+
+// =============================================================================
+// PLOTTING
+// =============================================================================
+
+// Zero line (= average volume)
+hline(0, "Avg Volume (0%)", color.new(color.white, 50), hline.style_solid, 1)
+
+// Threshold lines
+h_elevated = hline(elevated_thresh, "Elevated (" + str.tostring(elevated_thresh, "#") + "%)",
+     color.new(C_ELEVATED, 60), hline.style_dotted, 1)
+h_high = hline(high_thresh, "High (" + str.tostring(high_thresh, "#") + "%)",
+     color.new(C_HIGH, 60), hline.style_dotted, 1)
+h_below = hline(below_thresh, "Below Avg",
+     color.new(C_BELOW, 60), hline.style_dotted, 1)
+
+// Elevated zone fill (subtle)
+fill(h_elevated, h_high, color=color.new(C_ELEVATED, 92), title="Elevated Zone")
+
+// Main Vol ROC histogram
+plot(vol_roc_display, "Vol ROC", hist_color, 4, plot.style_histogram)
+
+// EMA of Vol ROC for trend (smoothed participation trend)
+roc_ema = ta.ema(vol_roc, 5)
+roc_ema_display = math.max(-100.0, math.min(cap_display, roc_ema))
+plot(roc_ema_display, "ROC Trend (EMA5)", color.new(color.white, 40), 2, plot.style_line)
+
+// Spike markers for very high volume events
+plot(is_high ? vol_roc_display : na, "High Volume",
+     color.new(C_HIGH, 20), 2, plot.style_circles)
+
+// Background tints
+bgcolor(is_high ? color.new(C_HIGH, 95) : na, title="High Vol BG")
+bgcolor(is_below ? color.new(C_BELOW, 95) : na, title="Low Vol BG")
+
+
+// =============================================================================
+// INFO TABLE
+// =============================================================================
+if barstate.islast
+    var table info = table.new(position.top_right, 2, 6,
+         bgcolor=color.new(#1a1a2e, 10), border_width=1, border_color=color.new(color.gray, 60))
+
+    table.cell(info, 0, 0, "VOL ROC", text_color=color.white, text_size=size.small,
+         bgcolor=color.new(#0f3460, 10))
+    table.cell(info, 1, 0, "", bgcolor=color.new(#0f3460, 10))
+
+    // Classification
+    class_str = is_high ? "▲▲ HIGH" : is_elevated ? "▲ ELEVATED" : is_below ? "▼ BELOW AVG" : "─ AVERAGE"
+    class_clr = is_high ? C_HIGH : is_elevated ? C_ELEVATED : is_below ? C_BELOW : C_AVERAGE
+    table.cell(info, 0, 1, "Signal", text_color=color.white, text_size=size.tiny)
+    table.cell(info, 1, 1, class_str, text_color=class_clr, text_size=size.tiny)
+
+    // ROC value
+    table.cell(info, 0, 2, "ROC %", text_color=color.white, text_size=size.tiny)
+    table.cell(info, 1, 2, str.tostring(vol_roc, "#.#") + "%", text_color=class_clr, text_size=size.tiny)
+
+    // Current volume
+    vol_str = volume >= 1000000 ? str.tostring(volume / 1000000, "#.##") + "M" :
+         volume >= 1000 ? str.tostring(volume / 1000, "#.#") + "k" :
+         str.tostring(volume)
+    table.cell(info, 0, 3, "Volume", text_color=color.white, text_size=size.tiny)
+    table.cell(info, 1, 3, vol_str, text_color=color.white, text_size=size.tiny)
+
+    // Baseline
+    base_str = baseline_avg >= 1000000 ? str.tostring(baseline_avg / 1000000, "#.##") + "M" :
+         baseline_avg >= 1000 ? str.tostring(baseline_avg / 1000, "#.#") + "k" :
+         str.tostring(math.round(baseline_avg))
+    table.cell(info, 0, 4, "Baseline", text_color=color.white, text_size=size.tiny)
+    table.cell(info, 1, 4, base_str, text_color=color.new(color.white, 40), text_size=size.tiny)
+
+    // Trend
+    trend_str = roc_rising ? "▲ RISING" : roc_falling ? "▼ FALLING" : "─ FLAT"
+    trend_clr = roc_rising ? C_HIGH : roc_falling ? C_BELOW : C_AVERAGE
+    table.cell(info, 0, 5, "Trend", text_color=color.white, text_size=size.tiny)
+    table.cell(info, 1, 5, trend_str, text_color=trend_clr, text_size=size.tiny)

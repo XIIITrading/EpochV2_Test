@@ -1,0 +1,167 @@
+// =============================================================================
+// EPOCH INDICATOR BREAKDOWN - #4: BODY-TO-RANGE RATIO
+// XIII Trading LLC
+// =============================================================================
+//
+// PURPOSE: Isolate and validate the Body Ratio signal.
+//
+// WHAT IT MEASURES:
+//   How much of the candle is "body" vs "wick."
+//   Full-body candle (ratio near 1.0) = decisive acceptance in one direction
+//   All-wick candle (ratio near 0.0) = rejection / indecision (doji, hammer, etc.)
+//
+// WHY IT MATTERS:
+//   Body ratio captures candle QUALITY that raw range (high-low) misses:
+//   - A 0.20% range candle with 90% body = strong directional acceptance
+//   - A 0.20% range candle with 20% body = both sides fighting (wicky rejection)
+//   - Engulfing patterns naturally show as high body ratio with direction flip
+//
+// WHAT TO LOOK FOR:
+//   1. Green bars above 0.6 = accepting longs (close near high, full body)
+//   2. Red bars above 0.6 = accepting shorts (close near low, full body)
+//   3. Orange zone below 0.3 = rejecting / indecision (wicky, doji)
+//   4. Consecutive high body ratio + same color = strong momentum quality
+//   5. Body ratio dropping while delta stays high = flow being absorbed
+//
+// FORMULA:
+//   body_ratio_raw = abs(close - open) / (high - low)
+//   body_ratio = EMA(body_ratio_raw, 3)
+//   body_dir = close > open ? 1 : close < open ? -1 : 0
+//
+// THRESHOLDS:
+//   >= 0.6 = ACCEPTING (strong body, decisive)
+//   <= 0.3 = REJECTING (wicky, indecisive)
+//   0.3-0.6 = NEUTRAL
+//
+// =============================================================================
+
+//@version=6
+indicator("Epoch #4: Body Ratio", shorttitle="④ Body", overlay=false, precision=2)
+
+
+// =============================================================================
+// INPUTS
+// =============================================================================
+ema_period     = input.int(3, "EMA Smoothing Period", minval=1, maxval=10,
+     tooltip="Smooths body ratio. Canonical = 3")
+accept_thresh  = input.float(0.60, "Acceptance Threshold", minval=0.3, maxval=0.9, step=0.05,
+     tooltip="Above this = full-body acceptance. Canonical = 0.60")
+reject_thresh  = input.float(0.30, "Rejection Threshold", minval=0.1, maxval=0.5, step=0.05,
+     tooltip="Below this = wicky rejection/indecision. Canonical = 0.30")
+show_raw       = input.bool(false, "Show Raw (unsmoothed) dots",
+     tooltip="Show per-bar body ratio as dots behind the EMA line")
+
+
+// =============================================================================
+// CORE CALCULATION
+// =============================================================================
+
+// --- Raw body ratio ---
+body = math.abs(close - open)
+bar_range = high - low
+body_ratio_raw = bar_range > 0 ? body / bar_range : 0.5
+
+// --- EMA smoothed ---
+body_ratio = ta.ema(body_ratio_raw, ema_period)
+
+// --- Direction (which side is the body?) ---
+body_dir = close > open ? 1 : close < open ? -1 : 0
+
+// --- Classification ---
+body_accepting = body_ratio >= accept_thresh
+body_rejecting = body_ratio <= reject_thresh
+
+// --- Directional body ratio for histogram (positive = bullish body, negative = bearish body) ---
+// Scale to -100..+100 for display
+body_display = float(body_dir) * body_ratio * 100.0
+// When body_dir is 0 (doji), show small neutral bar
+body_display := body_dir == 0 ? body_ratio * 20.0 : body_display
+
+
+// =============================================================================
+// COLORS
+// =============================================================================
+C_ACCEPT_BULL = #00E676   // Bright green - accepting long
+C_ACCEPT_BEAR = #FF1744   // Bright red - accepting short
+C_NEUTRAL_BULL = #26a69a  // Medium green
+C_NEUTRAL_BEAR = #ef5350  // Medium red
+C_REJECT      = #FF9800   // Orange - rejecting/wicky
+C_DOJI        = #555555   // Gray - doji
+C_THRESHOLD   = #FFEB3B   // Yellow for threshold lines
+
+// Histogram color
+hist_color = body_dir == 0 ? C_DOJI :
+     body_accepting ? (body_dir == 1 ? C_ACCEPT_BULL : C_ACCEPT_BEAR) :
+     body_rejecting ? C_REJECT :
+     (body_dir == 1 ? C_NEUTRAL_BULL : C_NEUTRAL_BEAR)
+
+
+// =============================================================================
+// PLOTTING
+// =============================================================================
+
+// Zero line
+hline(0, "Zero", color.new(color.gray, 40), hline.style_solid, 1)
+
+// Acceptance threshold lines (mapped to display scale)
+accept_line = accept_thresh * 100.0
+reject_line = reject_thresh * 100.0
+hline(60, "Accept ↑", color.new(#00E676, 70), hline.style_dotted, 1)
+hline(-60, "Accept ↓", color.new(#FF1744, 70), hline.style_dotted, 1)
+hline(30, "Reject ↑", color.new(#FF9800, 80), hline.style_dotted, 1)
+hline(-30, "Reject ↓", color.new(#FF9800, 80), hline.style_dotted, 1)
+
+// Raw dots (if enabled)
+raw_display = float(body_dir) * body_ratio_raw * 100.0
+raw_display := body_dir == 0 ? body_ratio_raw * 20.0 : raw_display
+plot(show_raw ? raw_display : na, "Raw Body Ratio",
+     body_dir == 1 ? color.new(C_NEUTRAL_BULL, 40) : body_dir == -1 ? color.new(C_NEUTRAL_BEAR, 40) : color.new(C_DOJI, 40),
+     1, plot.style_circles)
+
+// Main body ratio histogram
+plot(body_display, "Body Ratio", hist_color, 4, plot.style_histogram)
+
+// Body ratio EMA as a line (actual 0-1 value mapped to ±100 with direction)
+// This shows the smoothed trend
+body_line_val = body_ratio * 100.0  // Always positive, 0-100
+plot(body_line_val, "Body EMA (abs)", color.new(color.white, 50), 1, plot.style_line)
+
+// Highlight accepting zones
+bgcolor(body_accepting ? (body_dir == 1 ? color.new(C_ACCEPT_BULL, 95) : body_dir == -1 ? color.new(C_ACCEPT_BEAR, 95) : na) : na,
+     title="Acceptance BG")
+bgcolor(body_rejecting ? color.new(C_REJECT, 95) : na, title="Rejection BG")
+
+
+// =============================================================================
+// INFO TABLE
+// =============================================================================
+if barstate.islast
+    var table info = table.new(position.top_right, 2, 5,
+         bgcolor=color.new(#1a1a2e, 10), border_width=1, border_color=color.new(color.gray, 60))
+
+    table.cell(info, 0, 0, "BODY RATIO", text_color=color.white, text_size=size.small,
+         bgcolor=color.new(#0f3460, 10))
+    table.cell(info, 1, 0, "", bgcolor=color.new(#0f3460, 10))
+
+    // Classification
+    class_str = body_accepting ? (body_dir == 1 ? "◉ ACCEPT LONG" : body_dir == -1 ? "◉ ACCEPT SHORT" : "◉ ACCEPTING") :
+         body_rejecting ? "⊘ REJECTING" : "○ NEUTRAL"
+    class_clr = body_accepting ? (body_dir == 1 ? C_ACCEPT_BULL : C_ACCEPT_BEAR) :
+         body_rejecting ? C_REJECT : C_DOJI
+    table.cell(info, 0, 1, "State", text_color=color.white, text_size=size.tiny)
+    table.cell(info, 1, 1, class_str, text_color=class_clr, text_size=size.tiny)
+
+    // EMA value
+    table.cell(info, 0, 2, "EMA Value", text_color=color.white, text_size=size.tiny)
+    table.cell(info, 1, 2, str.tostring(body_ratio, "#.###"), text_color=class_clr, text_size=size.tiny)
+
+    // Raw value
+    table.cell(info, 0, 3, "Raw (1-bar)", text_color=color.white, text_size=size.tiny)
+    table.cell(info, 1, 3, str.tostring(body_ratio_raw, "#.###"),
+         text_color=body_dir == 1 ? C_NEUTRAL_BULL : body_dir == -1 ? C_NEUTRAL_BEAR : C_DOJI, text_size=size.tiny)
+
+    // Body direction
+    dir_str = body_dir == 1 ? "▲ BULL" : body_dir == -1 ? "▼ BEAR" : "─ DOJI"
+    dir_clr = body_dir == 1 ? C_ACCEPT_BULL : body_dir == -1 ? C_ACCEPT_BEAR : C_DOJI
+    table.cell(info, 0, 4, "Body Dir", text_color=color.white, text_size=size.tiny)
+    table.cell(info, 1, 4, dir_str, text_color=dir_clr, text_size=size.tiny)

@@ -1,0 +1,155 @@
+// =============================================================================
+// EPOCH INDICATOR BREAKDOWN - #3: CLOSE-TO-CLOSE DISPLACEMENT
+// XIII Trading LLC
+// =============================================================================
+//
+// PURPOSE: Isolate and validate the Displacement signal.
+//
+// WHAT IT MEASURES:
+//   How much price is ACTUALLY MOVING bar to bar, expressed as a percentage.
+//   This replaces both the old "price direction" check AND the "candle range gate."
+//   It answers the question: "Is price going anywhere?"
+//
+// WHY IT MATTERS:
+//   Heavy volume delta + zero displacement = ABSORPTION (price NOT moving despite flow)
+//   Heavy volume delta + strong displacement = CONTINUATION (flow IS moving price)
+//   This is the key insight from our iteration - absorption detection requires
+//   seeing that price is stalling despite directional pressure.
+//
+// WHAT TO LOOK FOR:
+//   1. Line rising = price moving up consistently (bullish displacement)
+//   2. Line falling = price moving down consistently (bearish displacement)
+//   3. Line flat at zero = price going NOWHERE (absorption/consolidation)
+//   4. Spikes = sharp moves (breakouts, stops hit, news)
+//   5. Compare with Delta: Delta strong + Displacement flat = ABSORPTION WARNING
+//
+// FORMULA:
+//   raw = (close - close[1]) / close[1] * 100
+//   displacement = EMA(raw, 5)   // smoothed to reduce M1 noise
+//   threshold = 0.02%            // below this = "not moving"
+//
+// =============================================================================
+
+//@version=6
+indicator("Epoch #3: Displacement", shorttitle="③ Disp", overlay=false, precision=4)
+
+
+// =============================================================================
+// INPUTS
+// =============================================================================
+ema_period     = input.int(5, "EMA Smoothing Period", minval=1, maxval=15,
+     tooltip="Smooths close-to-close % change. Higher = smoother but more lag")
+threshold      = input.float(0.02, "Movement Threshold %", minval=0.005, maxval=0.2, step=0.005,
+     tooltip="Below this abs value = 'not moving.' Helps filter M1 noise")
+norm_period    = input.int(25, "Normalization Period", minval=10, maxval=100)
+show_raw       = input.bool(false, "Show Raw (unsmoothed) dots",
+     tooltip="Show the raw close-to-close % change as dots behind the EMA line")
+
+
+// =============================================================================
+// CORE CALCULATION
+// =============================================================================
+
+// --- Raw close-to-close percentage change ---
+raw_displacement = close[1] != 0 ? (close - close[1]) / close[1] * 100.0 : 0.0
+
+// --- EMA smoothed ---
+displacement = ta.ema(raw_displacement, ema_period)
+
+// --- Direction (with threshold gate) ---
+disp_dir = displacement > threshold ? 1 : displacement < -threshold ? -1 : 0
+price_is_moving = math.abs(displacement) > threshold
+
+// --- Normalization for display (-100 to +100) ---
+disp_abs = math.abs(displacement)
+disp_hi = ta.highest(disp_abs, norm_period)
+disp_norm = disp_hi > 0 ? (displacement / disp_hi) * 100.0 : 0.0
+disp_norm := math.max(-100.0, math.min(100.0, disp_norm))
+
+// --- Raw normalization (for dots) ---
+raw_abs = math.abs(raw_displacement)
+raw_hi = ta.highest(raw_abs, norm_period)
+raw_norm = raw_hi > 0 ? (raw_displacement / raw_hi) * 100.0 : 0.0
+
+
+// =============================================================================
+// COLORS
+// =============================================================================
+C_DISP_BULL   = #00BCD4   // Cyan - price moving up
+C_DISP_BEAR   = #E040FB   // Magenta - price moving down
+C_DISP_FLAT   = #444444   // Dark gray - not moving
+C_THRESHOLD   = #FFEB3B   // Yellow threshold zone
+
+// Main line color
+line_color = disp_dir == 1 ? C_DISP_BULL : disp_dir == -1 ? C_DISP_BEAR : C_DISP_FLAT
+
+// Fill color (very transparent)
+fill_bull = color.new(C_DISP_BULL, 80)
+fill_bear = color.new(C_DISP_BEAR, 80)
+fill_color = displacement > 0 ? fill_bull : fill_bear
+
+
+// =============================================================================
+// PLOTTING
+// =============================================================================
+
+// Zero line
+hline(0, "Zero (No Movement)", color.new(color.white, 50), hline.style_solid, 1)
+hline(50, "+50", color.new(color.gray, 88), hline.style_dotted, 1)
+hline(-50, "-50", color.new(color.gray, 88), hline.style_dotted, 1)
+
+// Threshold zone (yellow band around zero)
+thresh_upper = disp_hi > 0 ? (threshold / disp_hi) * 100.0 : 5.0
+thresh_lower = -thresh_upper
+p_thresh_up = plot(thresh_upper, "Thresh +", color.new(C_THRESHOLD, 85), 1, plot.style_line)
+p_thresh_dn = plot(thresh_lower, "Thresh -", color.new(C_THRESHOLD, 85), 1, plot.style_line)
+fill(p_thresh_up, p_thresh_dn, color=color.new(C_THRESHOLD, 93), title="Dead Zone")
+
+// Raw dots (if enabled)
+plot(show_raw ? raw_norm : na, "Raw Displacement",
+     raw_displacement > 0 ? color.new(C_DISP_BULL, 50) : color.new(C_DISP_BEAR, 50),
+     1, plot.style_circles)
+
+// Main displacement line
+plot(disp_norm, "Displacement", line_color, 3, plot.style_line)
+
+// Fill from zero
+p_disp = plot(disp_norm, "Disp Fill Edge", color.new(na, 100), display=display.none)
+p_zero = plot(0, "Zero Ref", color.new(na, 100), display=display.none)
+fill(p_zero, p_disp, color=fill_color, title="Displacement Fill")
+
+// Highlight when displacement is in the "dead zone" (price NOT moving)
+bgcolor(not price_is_moving ? color.new(C_THRESHOLD, 95) : na, title="Dead Zone BG")
+
+
+// =============================================================================
+// INFO TABLE
+// =============================================================================
+if barstate.islast
+    var table info = table.new(position.top_right, 2, 5,
+         bgcolor=color.new(#1a1a2e, 10), border_width=1, border_color=color.new(color.gray, 60))
+
+    table.cell(info, 0, 0, "DISPLACEMENT", text_color=color.white, text_size=size.small,
+         bgcolor=color.new(#0f3460, 10))
+    table.cell(info, 1, 0, "", bgcolor=color.new(#0f3460, 10))
+
+    // Direction
+    dir_str = disp_dir == 1 ? "▲ BULLISH" : disp_dir == -1 ? "▼ BEARISH" : "─ FLAT"
+    dir_clr = disp_dir == 1 ? C_DISP_BULL : disp_dir == -1 ? C_DISP_BEAR : C_DISP_FLAT
+    table.cell(info, 0, 1, "Direction", text_color=color.white, text_size=size.tiny)
+    table.cell(info, 1, 1, dir_str, text_color=dir_clr, text_size=size.tiny)
+
+    // Raw value
+    table.cell(info, 0, 2, "EMA Value", text_color=color.white, text_size=size.tiny)
+    table.cell(info, 1, 2, str.tostring(displacement, "#.####") + "%", text_color=dir_clr, text_size=size.tiny)
+
+    // Moving?
+    moving_str = price_is_moving ? "YES ✓" : "NO ✗ (Dead Zone)"
+    moving_clr = price_is_moving ? #00E676 : C_THRESHOLD
+    table.cell(info, 0, 3, "Moving?", text_color=color.white, text_size=size.tiny)
+    table.cell(info, 1, 3, moving_str, text_color=moving_clr, text_size=size.tiny)
+
+    // Raw last bar
+    table.cell(info, 0, 4, "Raw (1-bar)", text_color=color.white, text_size=size.tiny)
+    table.cell(info, 1, 4, str.tostring(raw_displacement, "#.####") + "%",
+         text_color=raw_displacement > 0 ? C_DISP_BULL : C_DISP_BEAR, text_size=size.tiny)

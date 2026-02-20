@@ -1,0 +1,128 @@
+// =============================================================================
+// EPOCH INDICATOR BREAKDOWN - #1: VOLUME DELTA
+// XIII Trading LLC
+// =============================================================================
+//
+// PURPOSE: Isolate and validate the Volume Delta signal.
+//
+// WHAT IT MEASURES:
+//   Order flow pressure using bar position method.
+//   Close at high = 100% buying. Close at low = 100% selling.
+//   Rolling 5-bar sum smooths out noise.
+//
+// WHAT TO LOOK FOR:
+//   1. Direction: Green bars = net buying, Red bars = net selling
+//   2. Magnitude: Taller bars = stronger conviction from market participants
+//   3. Persistence: Consecutive same-color bars = sustained pressure
+//   4. Divergence: Price up but delta red (or vice versa) = absorption/exhaustion
+//
+// CANONICAL FORMULA (matches 00_shared/indicators/core/volume_delta.py):
+//   bar_position = (close - low) / (high - low)
+//   delta_multiplier = 2 * bar_position - 1
+//   bar_delta = volume * delta_multiplier
+//   rolling_delta = sum(bar_delta, 5)
+//
+// =============================================================================
+
+//@version=6
+indicator("Epoch #1: Volume Delta", shorttitle="① Delta", overlay=false, precision=0)
+
+
+// =============================================================================
+// INPUTS
+// =============================================================================
+rolling_period = input.int(5, "Rolling Period", minval=1, maxval=20,
+     tooltip="Number of bars to sum. Canonical = 5")
+norm_period    = input.int(25, "Normalization Period", minval=10, maxval=100,
+     tooltip="Rolling window for normalizing magnitude to 0-100 scale")
+show_per_bar   = input.bool(false, "Show Per-Bar Delta (dots)",
+     tooltip="Overlay individual bar deltas as dots behind the rolling histogram")
+
+
+// =============================================================================
+// CORE CALCULATION
+// =============================================================================
+
+// --- Per-Bar Delta ---
+bar_range = high - low
+bar_position = bar_range != 0 ? (close - low) / bar_range : (close >= open ? 1.0 : 0.0)
+delta_multiplier = 2.0 * bar_position - 1.0
+bar_delta = volume * delta_multiplier
+
+// --- Rolling Delta (sum of last N bars) ---
+// Using cumulative sum method (matches canonical _rolling_delta_core)
+cum_delta = ta.cum(bar_delta)
+rolling_delta = bar_index >= rolling_period ? cum_delta - cum_delta[rolling_period] : cum_delta
+
+// --- Direction ---
+delta_dir = rolling_delta > 0 ? 1 : rolling_delta < 0 ? -1 : 0
+
+// --- Normalized magnitude (0-100 scale for visual consistency) ---
+delta_abs = math.abs(rolling_delta)
+delta_hi = ta.highest(delta_abs, norm_period)
+delta_norm = delta_hi > 0 ? (delta_abs / delta_hi) * 100.0 : 0.0
+delta_display = float(delta_dir) * delta_norm
+
+
+// =============================================================================
+// COLORS
+// =============================================================================
+C_BULL_STRONG = #00E676   // Bright green
+C_BULL_MED    = #26a69a   // Medium green
+C_BULL_WEAK   = #1a5c4a   // Dim green
+C_BEAR_STRONG = #FF1744   // Bright red
+C_BEAR_MED    = #ef5350   // Medium red
+C_BEAR_WEAK   = #5c2a1a   // Dim red
+C_NEUTRAL     = #555555   // Gray
+
+// Color by magnitude
+bar_color = delta_dir == 0 ? C_NEUTRAL :
+     delta_dir == 1 ? (delta_norm > 66 ? C_BULL_STRONG : delta_norm > 33 ? C_BULL_MED : C_BULL_WEAK) :
+     (delta_norm > 66 ? C_BEAR_STRONG : delta_norm > 33 ? C_BEAR_MED : C_BEAR_WEAK)
+
+// Per-bar delta color (dimmer, smaller)
+perbar_color = bar_delta > 0 ? color.new(C_BULL_MED, 40) : color.new(C_BEAR_MED, 40)
+
+
+// =============================================================================
+// PLOTTING
+// =============================================================================
+
+// Zero line
+hline(0, "Zero", color.new(color.gray, 40), hline.style_solid, 1)
+hline(50, "+50", color.new(color.gray, 88), hline.style_dotted, 1)
+hline(-50, "-50", color.new(color.gray, 88), hline.style_dotted, 1)
+
+// Per-bar delta (background dots if enabled)
+plot(show_per_bar ? (bar_delta > 0 ? 1 : -1) * (delta_hi > 0 ? math.abs(bar_delta) / delta_hi * 100 : 0) : na,
+     "Per-Bar Delta", perbar_color, 1, plot.style_circles)
+
+// Rolling delta histogram (main signal)
+plot(delta_display, "Rolling Delta", bar_color, 4, plot.style_histogram)
+
+// Raw value in info table
+if barstate.islast
+    var table info = table.new(position.top_right, 2, 4,
+         bgcolor=color.new(#1a1a2e, 10), border_width=1, border_color=color.new(color.gray, 60))
+
+    table.cell(info, 0, 0, "VOL DELTA", text_color=color.white, text_size=size.small,
+         bgcolor=color.new(#0f3460, 10))
+    table.cell(info, 1, 0, "", bgcolor=color.new(#0f3460, 10))
+
+    // Direction arrow
+    dir_sym = delta_dir == 1 ? "▲ BUYING" : delta_dir == -1 ? "▼ SELLING" : "─ NEUTRAL"
+    dir_clr = delta_dir == 1 ? C_BULL_STRONG : delta_dir == -1 ? C_BEAR_STRONG : C_NEUTRAL
+    table.cell(info, 0, 1, "Direction", text_color=color.white, text_size=size.tiny)
+    table.cell(info, 1, 1, dir_sym, text_color=dir_clr, text_size=size.tiny)
+
+    // Raw rolling value
+    vd_abs_val = math.abs(rolling_delta)
+    vd_str = vd_abs_val >= 1000000 ? str.tostring(rolling_delta / 1000000, "#.##") + "M" :
+         vd_abs_val >= 1000 ? str.tostring(rolling_delta / 1000, "#.#") + "k" :
+         str.tostring(math.round(rolling_delta))
+    table.cell(info, 0, 2, "Rolling " + str.tostring(rolling_period), text_color=color.white, text_size=size.tiny)
+    table.cell(info, 1, 2, vd_str, text_color=dir_clr, text_size=size.tiny)
+
+    // Normalized magnitude
+    table.cell(info, 0, 3, "Magnitude", text_color=color.white, text_size=size.tiny)
+    table.cell(info, 1, 3, str.tostring(delta_norm, "#.#") + " / 100", text_color=dir_clr, text_size=size.tiny)
